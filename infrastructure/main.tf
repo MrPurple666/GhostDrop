@@ -12,6 +12,7 @@ provider "aws" {
   skip_credentials_validation = var.aws_endpoint_url != null
   skip_metadata_api_check     = var.aws_endpoint_url != null
   skip_requesting_account_id  = var.aws_endpoint_url != null
+  s3_use_path_style           = var.aws_endpoint_url != null
   endpoints {
     apigateway = var.aws_endpoint_url
     cloudwatch = var.aws_endpoint_url

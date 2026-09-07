@@ -42,6 +42,7 @@ class UploadServiceTest {
     private static final class InMemoryRepository implements FileRepository {
         private TemporaryFile file;
         public Optional<TemporaryFile> findById(String id) { return Optional.ofNullable(file).filter(value -> value.id().equals(id)); }
+        public Optional<TemporaryFile> reserveDownload(String id, Instant now) { return Optional.empty(); }
         public void save(TemporaryFile value) { file = value; }
     }
 }

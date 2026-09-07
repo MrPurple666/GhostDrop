@@ -11,7 +11,7 @@ stop:
 
 infrastructure: backend
 	./scripts/terraform.sh init
-	./scripts/terraform.sh apply -auto-approve -var='aws_endpoint_url=http://localhost.floci.io:4566'
+	./scripts/terraform.sh apply -auto-approve -var='aws_endpoint_url=http://host.docker.internal:4566'
 
 backend:
 	./scripts/package-lambda.sh

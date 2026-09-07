@@ -14,7 +14,7 @@ infrastructure: backend
 	./scripts/terraform.sh apply -auto-approve -var='aws_endpoint_url=http://localhost.floci.io:4566'
 
 backend:
-	cd backend && mvn package
+	./scripts/package-lambda.sh
 
 frontend:
 	cd frontend && npm run build

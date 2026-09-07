@@ -21,5 +21,5 @@ variable "allowed_origin" {
 
 variable "lambda_artifact" {
   type    = string
-  default = "../backend/target/ghostdrop-lambda.jar"
+  default = "../backend/target/ghostdrop-lambda.zip"
 }

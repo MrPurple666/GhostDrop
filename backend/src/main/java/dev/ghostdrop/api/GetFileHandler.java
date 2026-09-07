@@ -11,7 +11,7 @@ import java.time.Clock;
 import java.util.Map;
 
 public final class GetFileHandler implements RequestHandler<APIGatewayV2HTTPEvent, APIGatewayV2HTTPResponse> {
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = new ObjectMapper().findAndRegisterModules();
     private final DynamoDbFileRepository files = new DynamoDbFileRepository(AwsConfiguration.dynamoDb(), System.getenv("FILES_TABLE"));
 
     @Override public APIGatewayV2HTTPResponse handleRequest(APIGatewayV2HTTPEvent event, Context context) {

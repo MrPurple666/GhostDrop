@@ -17,7 +17,7 @@ import java.time.Duration;
 import java.util.Map;
 
 public final class CreateUploadHandler implements RequestHandler<APIGatewayV2HTTPEvent, APIGatewayV2HTTPResponse> {
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = new ObjectMapper().findAndRegisterModules();
     private final UploadService uploads = new UploadService(new DynamoDbFileRepository(AwsConfiguration.dynamoDb(), required("FILES_TABLE")), new S3StorageService(required("FILES_BUCKET"), AwsConfiguration.presigner(), Duration.ofSeconds(number("GHOSTDROP_UPLOAD_URL_SECONDS", 900))), new Argon2PasswordHasher(), Clock.systemUTC(), new GhostDropSettings(number("GHOSTDROP_MAX_FILE_SIZE_BYTES", 524_288_000), number("GHOSTDROP_MIN_LIFETIME_SECONDS", 300), number("GHOSTDROP_MAX_LIFETIME_SECONDS", 2_592_000), number("GHOSTDROP_UPLOAD_URL_SECONDS", 900), number("GHOSTDROP_DOWNLOAD_URL_SECONDS", 300)));
 
     @Override

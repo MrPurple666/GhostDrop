@@ -16,7 +16,7 @@ import java.time.Duration;
 import java.util.Map;
 
 public final class CreateDownloadHandler implements RequestHandler<APIGatewayV2HTTPEvent, APIGatewayV2HTTPResponse> {
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = new ObjectMapper().findAndRegisterModules();
     private static final long DOWNLOAD_LIFETIME_SECONDS = number("GHOSTDROP_DOWNLOAD_URL_SECONDS", 300);
     private final S3StorageService storage = new S3StorageService(required("FILES_BUCKET"), AwsConfiguration.presigner(), Duration.ofSeconds(number("GHOSTDROP_UPLOAD_URL_SECONDS", 900)));
     private final DownloadService downloads = new DownloadService(new DynamoDbFileRepository(AwsConfiguration.dynamoDb(), required("FILES_TABLE")), key -> storage.createDownloadUrl(key, Duration.ofSeconds(DOWNLOAD_LIFETIME_SECONDS)), new Argon2PasswordHasher()::verify, Clock.systemUTC());

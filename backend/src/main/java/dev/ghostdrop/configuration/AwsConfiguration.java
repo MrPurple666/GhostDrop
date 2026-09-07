@@ -17,15 +17,17 @@ public final class AwsConfiguration {
     public static S3Client s3() { return configure(S3Client.builder()).build(); }
     public static S3Presigner presigner() {
         var builder = S3Presigner.builder().region(REGION);
-        var endpoint = System.getenv("AWS_ENDPOINT_URL");
+        var endpoint = endpoint();
         if (endpoint != null && !endpoint.isBlank()) builder.endpointOverride(URI.create(endpoint)).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")));
         return builder.build();
     }
 
     private static <B extends software.amazon.awssdk.awscore.client.builder.AwsClientBuilder<B, ?>> B configure(B builder) {
-        var endpoint = System.getenv("AWS_ENDPOINT_URL");
+        var endpoint = endpoint();
         builder.region(REGION);
         if (endpoint != null && !endpoint.isBlank()) builder.endpointOverride(URI.create(endpoint)).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")));
         return builder;
     }
+
+    private static String endpoint() { return System.getenv().getOrDefault("GHOSTDROP_AWS_ENDPOINT_URL", System.getenv("AWS_ENDPOINT_URL")); }
 }

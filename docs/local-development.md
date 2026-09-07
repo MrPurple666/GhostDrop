@@ -22,8 +22,16 @@ The resulting deployment archive is `backend/target/ghostdrop-lambda.zip`.
 
 ### Floci behavior
 
-Floci 2.0.1 provisions S3, DynamoDB, IAM, EventBridge, and API Gateway resources used by GhostDrop. It rejects Java custom runtimes during Lambda creation with `Handler file 'dev.ghostdrop.api' not found in deployment package`, even when the archive has `bootstrap`, `runtime/bin/java`, and the handler JAR.
+Floci 2.0.1 provisions S3, DynamoDB, IAM, EventBridge, API Gateway, and the six GhostDrop Lambda functions. Its custom-runtime function creation validates `handler` as a file name. When `AWS_ENDPOINT_URL` is set, Terraform configures `handler = "bootstrap"` and passes the Java handler through `GHOSTDROP_HANDLER`; production keeps the Java handler declaration. This is the documented custom-runtime entrypoint shape.
+
+The next invocation reaches the bootstrap but fails because this workstation's Java 26 `jlink` runtime requires `GLIBC_2.38` and Floci runs `public.ecr.aws/lambda/provided:al2023`, which provides GLIBC 2.34:
+
+```text
+/var/task/runtime/bin/java: /lib64/libc.so.6: version `GLIBC_2.38' not found
+```
 
 ### Local workaround
 
-Keep the Terraform production configuration unchanged. Use Floci to test S3 and DynamoDB adapters, and invoke application/domain tests locally with Maven until Floci supports `provided.al2023` Java custom runtimes. Do not substitute a Node or Java 21 Lambda implementation: it would test a different production architecture.
+Build the Java 26 runtime inside an Amazon Linux 2023-compatible build image before creating the ZIP. The custom runtime must be linked against the same GLIBC baseline as `provided.al2023`. Do not replace the production Lambda with Node.js or Java 21: that would test a different architecture.
+
+Until that image is available, Floci remains usable for Terraform, S3, DynamoDB, IAM, EventBridge, API Gateway, Lambda deployment, and adapter tests. Invocation-level tests require the AL2023-compatible Java 26 runtime.

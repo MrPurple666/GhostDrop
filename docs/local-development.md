@@ -1,37 +1,89 @@
 # Local development
 
+GhostDrop runs against **Floci**, an AWS emulator, so the whole serverless path
+(upload → confirm → download → delete → cleanup) is exercised locally before
+deployment.
+
 ## Requirements
 
 - Java 26 with `jlink`
 - Maven 3.9+
 - Node.js 26+
 - Docker
-- Floci
-
-Run `make setup`, `make start`, then `make infrastructure`.
-
-## Java 26 Lambda runtime
-
-AWS does not offer a managed Java 26 Lambda runtime. GhostDrop packages a custom `provided.al2023` runtime with a minimized Java 26 image, the Lambda Runtime Interface Client, and a `bootstrap` executable:
+- Floci (started with `floci start` or `make start`)
 
 ```sh
-./scripts/package-lambda.sh
+make setup          # frontend dependencies
+make start          # start the Floci emulator
+make infrastructure # package Lambdas + apply Terraform to Floci
+make serve          # http://localhost:5173
 ```
 
-The resulting deployment archive is `backend/target/ghostdrop-lambda.zip`.
+## The custom Java 26 runtime
 
-### Floci behavior
+AWS offers no managed Java 26 Lambda runtime. GhostDrop ships a custom
+`provided.al2023` runtime: a minimized Java 26 image, the Lambda Runtime
+Interface Client, and a `bootstrap` that launches it with
+`GHOSTDROP_HANDLER`.
 
-Floci 2.0.1 provisions S3, DynamoDB, IAM, EventBridge, API Gateway, and the six GhostDrop Lambda functions. Its custom-runtime function creation validates `handler` as a file name. When `AWS_ENDPOINT_URL` is set, Terraform configures `handler = "bootstrap"` and passes the Java handler through `GHOSTDROP_HANDLER`; production keeps the Java handler declaration. This is the documented custom-runtime entrypoint shape.
+A Java 26 `jlink` image built on this workstation links against a newer glibc
+(`GLIBC_2.38`) than the Lambda base image provides (`GLIBC_2.34` on
+`provided.al2023`), so the packaged runtime is built **inside** an
+`amazonlinux:2023` container with the `java-26-amazon-corretto-devel` + `-jmods`
+packages:
 
-The next invocation reaches the bootstrap but fails because this workstation's Java 26 `jlink` runtime requires `GLIBC_2.38` and Floci runs `public.ecr.aws/lambda/provided:al2023`, which provides GLIBC 2.34:
-
-```text
-/var/task/runtime/bin/java: /lib64/libc.so.6: version `GLIBC_2.38' not found
+```sh
+./scripts/package-lambda.sh   # outputs backend/target/ghostdrop-lambda.zip
 ```
 
-### Local workaround
+This is what `make infrastructure` runs first. Do not swap the production
+runtime for Node.js or Java 21 to make local testing easier — that tests a
+different architecture than production.
 
-Build the Java 26 runtime inside an Amazon Linux 2023-compatible build image before creating the ZIP. The custom runtime must be linked against the same GLIBC baseline as `provided.al2023`. Do not replace the production Lambda with Node.js or Java 21: that would test a different architecture.
+## Terraform and Floci endpoints
 
-Until that image is available, Floci remains usable for Terraform, S3, DynamoDB, IAM, EventBridge, API Gateway, Lambda deployment, and adapter tests. Invocation-level tests require the AL2023-compatible Java 26 runtime.
+Two endpoint variables keep Lambda calls and browser-facing S3 URLs apart when
+Terraform points at Floci (both are unset in production):
+
+- `aws_endpoint_url=http://host.docker.internal:4566` — used by Lambda SDK
+  *clients* (delete, DynamoDB). `host.docker.internal` is reachable from inside
+  the Lambda containers via the Docker bridge; `localhost.floci.io` is not
+  (it resolves to `::1` inside the container).
+- `public_endpoint_url=http://localhost.floci.io:4566` — used by the S3
+  *presigner*, whose URLs are returned to the browser. `localhost.floci.io`
+  resolves on this host, so presigned PUT/GET work in a normal browser.
+
+The presigner therefore signs path-style URLs against `localhost.floci.io`;
+server-side SDK clients still use `host.docker.internal`.
+
+### Browser flow (`make serve`)
+
+`scripts/dev-server.mjs` serves the built SPA at `http://localhost:5173` and
+proxies `/api` to the emulator. It pins the API Gateway `Host` header because
+**Floci keys API Gateway routing by the Host header**, and the emulated
+gateway hostname (from `terraform.tfstate` output `api_url`) is not resolvable
+on this host. Open the page, upload a file, copy the share link, open `/d/{id}`
+in a new tab, and download.
+
+## Documented Floci deviations
+
+These emulator behaviors differ from AWS; production code is written to the AWS
+behavior and verified there:
+
+1. **Signed `content-length` is not enforced.** The presigned upload URL signs
+   the declared file size. Real S3 rejects a body of any other length; Floci
+   accepts whatever length you send. The signing is kept because it is the
+   production storage-abuse control (see SECURITY.md).
+2. **API Gateway routes by `Host` header**, and its public hostname is not on
+   the host DNS. The dev server sets that header; production uses the real
+   gateway URL.
+3. **`localhost.floci.io` inside Lambda containers** resolves to `::1` (the
+   container itself), which is why SDK clients target `host.docker.internal`
+   instead.
+
+## Notes
+
+- The scheduled cleanup handler connects cleanly to Floci (it timed out only
+  before the endpoint variables were wired) and stays warm between runs.
+- `make test` runs `mvn test` and Vitest. Validate Terraform with
+  `./scripts/terraform.sh validate`.

@@ -29,6 +29,7 @@ public final class CreateUploadHandler implements RequestHandler<APIGatewayV2HTT
         } catch (IllegalArgumentException exception) {
             return response(400, "{\"code\":\"INVALID_REQUEST\",\"message\":\"The upload request is invalid.\"}");
         } catch (Exception exception) {
+            exception.printStackTrace();
             return response(500, "{\"code\":\"INTERNAL_ERROR\",\"message\":\"The request could not be completed.\"}");
         }
     }

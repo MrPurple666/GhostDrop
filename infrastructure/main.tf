@@ -15,14 +15,14 @@ provider "aws" {
   s3_use_path_style           = var.aws_endpoint_url != null
   endpoints {
     apigatewayv2 = var.aws_endpoint_url
-    apigateway = var.aws_endpoint_url
-    cloudwatch = var.aws_endpoint_url
-    dynamodb   = var.aws_endpoint_url
-    events     = var.aws_endpoint_url
-    iam        = var.aws_endpoint_url
-    lambda     = var.aws_endpoint_url
-    logs       = var.aws_endpoint_url
-    s3         = var.aws_endpoint_url
+    apigateway   = var.aws_endpoint_url
+    cloudwatch   = var.aws_endpoint_url
+    dynamodb     = var.aws_endpoint_url
+    events       = var.aws_endpoint_url
+    iam          = var.aws_endpoint_url
+    lambda       = var.aws_endpoint_url
+    logs         = var.aws_endpoint_url
+    s3           = var.aws_endpoint_url
   }
 }
 
@@ -73,7 +73,7 @@ resource "aws_s3_bucket_cors_configuration" "files" {
 resource "aws_dynamodb_table" "files" {
   name         = local.table_name
   billing_mode = "PAY_PER_REQUEST"
-  hash_key = "id"
+  hash_key     = "id"
   attribute {
     name = "id"
     type = "S"
@@ -103,12 +103,12 @@ resource "aws_dynamodb_table" "files" {
   }
   ttl {
     attribute_name = "expiresAt"
-    enabled = true
+    enabled        = true
   }
 }
 
 resource "aws_iam_role" "lambda" {
-  name = "${local.prefix}-lambda"
+  name               = "${local.prefix}-lambda"
   assume_role_policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Principal = { Service = "lambda.amazonaws.com" }, Action = "sts:AssumeRole" }] })
 }
 
@@ -128,26 +128,32 @@ resource "aws_lambda_function" "handlers" {
   role          = aws_iam_role.lambda.arn
   runtime       = "provided.al2023"
   handler = var.aws_endpoint_url == null ? {
-    upload = "dev.ghostdrop.api.CreateUploadHandler::handleRequest"
-    info = "dev.ghostdrop.api.GetFileHandler::handleRequest"
+    upload   = "dev.ghostdrop.api.CreateUploadHandler::handleRequest"
+    info     = "dev.ghostdrop.api.GetFileHandler::handleRequest"
     download = "dev.ghostdrop.api.CreateDownloadHandler::handleRequest"
-    delete = "dev.ghostdrop.api.DeleteFileHandler::handleRequest"
-    confirm = "dev.ghostdrop.api.UploadConfirmationHandler::handleRequest"
-    cleanup = "dev.ghostdrop.api.ExpiredFileCleanupHandler::handleRequest"
+    delete   = "dev.ghostdrop.api.DeleteFileHandler::handleRequest"
+    confirm  = "dev.ghostdrop.api.UploadConfirmationHandler::handleRequest"
+    cleanup  = "dev.ghostdrop.api.ExpiredFileCleanupHandler::handleRequest"
   }[each.key] : "bootstrap"
   filename         = var.lambda_artifact
   source_code_hash = filebase64sha256(var.lambda_artifact)
   timeout          = 30
   memory_size      = 1024
   environment {
-    variables = { FILES_TABLE = aws_dynamodb_table.files.name, FILES_BUCKET = aws_s3_bucket.files.bucket, GHOSTDROP_ALLOWED_ORIGIN = var.allowed_origin, GHOSTDROP_ENVIRONMENT = var.environment, GHOSTDROP_HANDLER = {
-      upload = "dev.ghostdrop.api.CreateUploadHandler::handleRequest"
-      info = "dev.ghostdrop.api.GetFileHandler::handleRequest"
-      download = "dev.ghostdrop.api.CreateDownloadHandler::handleRequest"
-      delete = "dev.ghostdrop.api.DeleteFileHandler::handleRequest"
-      confirm = "dev.ghostdrop.api.UploadConfirmationHandler::handleRequest"
-      cleanup = "dev.ghostdrop.api.ExpiredFileCleanupHandler::handleRequest"
-    }[each.key] }
+    variables = merge({
+      FILES_TABLE              = aws_dynamodb_table.files.name
+      FILES_BUCKET             = aws_s3_bucket.files.bucket
+      GHOSTDROP_ALLOWED_ORIGIN = var.allowed_origin
+      GHOSTDROP_ENVIRONMENT    = var.environment
+      GHOSTDROP_HANDLER = {
+        upload   = "dev.ghostdrop.api.CreateUploadHandler::handleRequest"
+        info     = "dev.ghostdrop.api.GetFileHandler::handleRequest"
+        download = "dev.ghostdrop.api.CreateDownloadHandler::handleRequest"
+        delete   = "dev.ghostdrop.api.DeleteFileHandler::handleRequest"
+        confirm  = "dev.ghostdrop.api.UploadConfirmationHandler::handleRequest"
+        cleanup  = "dev.ghostdrop.api.ExpiredFileCleanupHandler::handleRequest"
+      }[each.key]
+    }, var.aws_endpoint_url == null ? {} : { AWS_ENDPOINT_URL = var.aws_endpoint_url })
   }
 }
 
@@ -196,8 +202,8 @@ resource "aws_s3_bucket_notification" "confirm" {
   bucket = aws_s3_bucket.files.id
   lambda_function {
     lambda_function_arn = aws_lambda_function.handlers["confirm"].arn
-    events = ["s3:ObjectCreated:*"]
-    filter_prefix = "uploads/"
+    events              = ["s3:ObjectCreated:*"]
+    filter_prefix       = "uploads/"
   }
   depends_on = [aws_lambda_permission.s3]
 }

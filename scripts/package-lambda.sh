@@ -10,7 +10,7 @@ cp target/ghostdrop-lambda.jar target/lambda/lib/
 cat > target/lambda/bootstrap <<'BOOTSTRAP'
 #!/bin/sh
 set -eu
-exec "$LAMBDA_TASK_ROOT/runtime/bin/java" -cp "$LAMBDA_TASK_ROOT/lib/ghostdrop-lambda.jar" com.amazonaws.services.lambda.runtime.api.client.AWSLambda "$_HANDLER"
+exec "$LAMBDA_TASK_ROOT/runtime/bin/java" -cp "$LAMBDA_TASK_ROOT/lib/ghostdrop-lambda.jar" com.amazonaws.services.lambda.runtime.api.client.AWSLambda "${GHOSTDROP_HANDLER:-$_HANDLER}"
 BOOTSTRAP
 chmod 755 target/lambda/bootstrap
 (cd target/lambda && jar --create --file ../ghostdrop-lambda.zip .)

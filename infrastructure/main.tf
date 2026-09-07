@@ -127,20 +127,27 @@ resource "aws_lambda_function" "handlers" {
   function_name = each.value
   role          = aws_iam_role.lambda.arn
   runtime       = "provided.al2023"
-  handler = {
+  handler = var.aws_endpoint_url == null ? {
     upload = "dev.ghostdrop.api.CreateUploadHandler::handleRequest"
     info = "dev.ghostdrop.api.GetFileHandler::handleRequest"
     download = "dev.ghostdrop.api.CreateDownloadHandler::handleRequest"
     delete = "dev.ghostdrop.api.DeleteFileHandler::handleRequest"
     confirm = "dev.ghostdrop.api.UploadConfirmationHandler::handleRequest"
     cleanup = "dev.ghostdrop.api.ExpiredFileCleanupHandler::handleRequest"
-  }[each.key]
+  }[each.key] : "bootstrap"
   filename         = var.lambda_artifact
   source_code_hash = filebase64sha256(var.lambda_artifact)
   timeout          = 30
   memory_size      = 1024
   environment {
-    variables = { FILES_TABLE = aws_dynamodb_table.files.name, FILES_BUCKET = aws_s3_bucket.files.bucket, GHOSTDROP_ALLOWED_ORIGIN = var.allowed_origin, GHOSTDROP_ENVIRONMENT = var.environment }
+    variables = { FILES_TABLE = aws_dynamodb_table.files.name, FILES_BUCKET = aws_s3_bucket.files.bucket, GHOSTDROP_ALLOWED_ORIGIN = var.allowed_origin, GHOSTDROP_ENVIRONMENT = var.environment, GHOSTDROP_HANDLER = {
+      upload = "dev.ghostdrop.api.CreateUploadHandler::handleRequest"
+      info = "dev.ghostdrop.api.GetFileHandler::handleRequest"
+      download = "dev.ghostdrop.api.CreateDownloadHandler::handleRequest"
+      delete = "dev.ghostdrop.api.DeleteFileHandler::handleRequest"
+      confirm = "dev.ghostdrop.api.UploadConfirmationHandler::handleRequest"
+      cleanup = "dev.ghostdrop.api.ExpiredFileCleanupHandler::handleRequest"
+    }[each.key] }
   }
 }
 

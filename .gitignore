@@ -8,6 +8,5 @@ target/
 .terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl
 .tools/
 .DS_Store

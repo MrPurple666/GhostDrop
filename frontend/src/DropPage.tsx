@@ -3,22 +3,9 @@ import { apiJson } from './api';
 import { Copy } from './locale';
 import { formatSize } from './messages';
 
-interface FileInfo {
-  fileName: string;
-  contentType: string;
-  fileSize: number;
-  passwordProtected: boolean;
-  remainingDownloads: number | null;
-}
-
-interface DownloadResponse {
-  downloadUrl: string;
-}
-
-interface DropPageProps {
-  id: string;
-  copy: Copy;
-}
+interface FileInfo { fileName: string; fileSize: number; passwordProtected: boolean; remainingDownloads: number | null; }
+interface DownloadResponse { downloadUrl: string; }
+interface DropPageProps { id: string; copy: Copy; }
 
 export function DropPage({ id, copy }: DropPageProps) {
   const [info, setInfo] = useState<FileInfo>();
@@ -37,42 +24,55 @@ export function DropPage({ id, copy }: DropPageProps) {
   }, [id]);
 
   const download = async () => {
-    setBusy(true);
-    setWrong(false);
+    setBusy(true); setWrong(false);
     try {
       const created = await apiJson<DownloadResponse>(`/api/v1/files/${id}/downloads`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        method: 'POST', headers: { 'content-type': 'application/json' },
         body: info?.passwordProtected ? JSON.stringify({ password }) : '{}'
       });
       location.href = created.downloadUrl;
-    } catch {
-      setWrong(true);
-      setBusy(false);
-    }
+    } catch { setWrong(true); setBusy(false); }
   };
 
   return (
-    <section className="panel drop" aria-busy={!info && !unavailable}>
-      {unavailable && <>
-        <h2>{copy.unavailable}</h2>
-        <a href="/">{copy.makeAnother}</a>
-      </>}
-      {!unavailable && !info && <p className="status" role="status">{copy.downloading}</p>}
-      {!unavailable && info && <>
-        <h2 className="file-name">{info.fileName}</h2>
-        <dl className="meta">
-          <div><dt>{copy.size}</dt><dd>{formatSize(info.fileSize)}</dd></div>
-          {info.remainingDownloads != null && <div><dt>{copy.remainingDownloads}</dt><dd>{info.remainingDownloads}</dd></div>}
-        </dl>
-        {info.passwordProtected && <>
-          <label>{copy.passwordProtected}
-            <input type="password" value={password} onChange={event => { setPassword(event.target.value); setWrong(false); }} aria-invalid={wrong} autoComplete="current-password" />
-          </label>
-          {wrong && <p className="error" role="alert">{copy.wrongPassword}</p>}
-        </>}
-        <button className="primary" type="button" disabled={busy} onClick={download}>{copy.download}</button>
-      </>}
+    <section className="drop-card" aria-busy={!info && !unavailable}>
+      {unavailable ? (
+        <>
+          <p className="eyebrow">404 — DROP</p>
+          <h1 className="hero-title">{copy.unavailable}</h1>
+          <a className="backlink" href="/">← {copy.makeAnother}</a>
+        </>
+      ) : !info ? (
+        <p className="status busy" role="status"><span className="led" />{copy.downloading}</p>
+      ) : (
+        <>
+          <p className="eyebrow">DROP · {id.slice(0, 8).toUpperCase()}</p>
+          <h1 className="file-name">{info.fileName}</h1>
+
+          <div className="meta-row">
+            <div className="meta-cell"><div className="cap">{copy.size}</div><div className="val">{formatSize(info.fileSize)}</div></div>
+            {info.remainingDownloads != null && (
+              <div className="meta-cell"><div className="cap">{copy.remainingDownloads}</div><div className="val">{info.remainingDownloads}</div></div>
+            )}
+          </div>
+
+          {info.passwordProtected && (
+            <div className="ctrl" style={{ marginBottom: 16 }}>
+              <label>
+                <span className="cap"><span>{copy.passwordProtected}</span></span>
+                <input type="password" value={password} onChange={event => { setPassword(event.target.value); setWrong(false); }} placeholder="••••••••" autoComplete="current-password" aria-invalid={wrong} />
+              </label>
+            </div>
+          )}
+
+          <button className="btn btn-primary" type="button" disabled={busy} onClick={download}>
+            {info.passwordProtected ? copy.unlock : copy.download}
+          </button>
+
+          {wrong && <p className="status err" role="alert"><span className="led" />{copy.wrongPassword}</p>}
+          <a className="backlink" href="/">← {copy.makeAnother}</a>
+        </>
+      )}
     </section>
   );
 }

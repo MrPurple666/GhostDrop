@@ -5,7 +5,7 @@ cd backend
 mvn -q package
 rm -rf target/lambda
 mkdir -p target/lambda/lib
-jlink --add-modules java.base,java.desktop,java.naming,java.security.jgss,java.sql,jdk.unsupported --strip-debug --no-header-files --no-man-pages --output target/lambda/runtime
+docker run --rm -v "$(pwd)":/workspace -w /workspace amazonlinux:2023 bash -lc 'dnf install -y binutils java-26-amazon-corretto-devel java-26-amazon-corretto-jmods >/dev/null && java_home=$(dirname "$(dirname "$(readlink -f "$(command -v java)")")") && "$java_home/bin/jlink" --add-modules java.base,java.desktop,java.naming,java.security.jgss,java.sql,jdk.unsupported --strip-debug --no-header-files --no-man-pages --output target/lambda/runtime'
 cp target/ghostdrop-lambda.jar target/lambda/lib/
 cat > target/lambda/bootstrap <<'BOOTSTRAP'
 #!/bin/sh

@@ -21,6 +21,6 @@ public final class DeleteFileHandler implements RequestHandler<APIGatewayV2HTTPE
         try { return deletion.delete(event.getPathParameters().get("id"), token) ? response(204, "") : response(401, "{\"code\":\"UNAUTHORIZED\",\"message\":\"Deletion authorization failed.\"}"); }
         catch (Exception exception) { return response(500, "{\"code\":\"INTERNAL_ERROR\",\"message\":\"The request could not be completed.\"}"); }
     }
-    private static APIGatewayV2HTTPResponse response(int status, String body) { return APIGatewayV2HTTPResponse.builder().withStatusCode(status).withHeaders(Map.of("content-type", "application/json")).withBody(body).build(); }
+    private static APIGatewayV2HTTPResponse response(int status, String body) { return APIGatewayV2HTTPResponse.builder().withStatusCode(status).withHeaders(Map.of("content-type", "application/json", "access-control-allow-origin", System.getenv().getOrDefault("GHOSTDROP_ALLOWED_ORIGIN", "http://localhost:5173"))).withBody(body).build(); }
     private static String required(String name) { var value = System.getenv(name); if (value == null || value.isBlank()) throw new IllegalStateException(name + " is required"); return value; }
 }

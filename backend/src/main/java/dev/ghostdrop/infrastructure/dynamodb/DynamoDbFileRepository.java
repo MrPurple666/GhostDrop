@@ -45,6 +45,13 @@ public final class DynamoDbFileRepository implements FileRepository {
     }
 
     @Override
+    public boolean markAvailable(String storageKey) {
+        var items = client.query(request -> request.tableName(table).indexName("storage-key-index").keyConditionExpression("storageKey = :key").expressionAttributeValues(Map.of(":key", value(storageKey)))).items();
+        if (items.isEmpty()) return false;
+        return client.updateItem(request -> request.tableName(table).key(Map.of("id", value(text(items.getFirst(), "id")))).updateExpression("SET #status = :available").conditionExpression("#status = :pending").expressionAttributeNames(Map.of("#status", "status")).expressionAttributeValues(Map.of(":available", value(FileStatus.AVAILABLE.name()), ":pending", value(FileStatus.PENDING_UPLOAD.name()))).returnValues(ReturnValue.NONE)).sdkHttpResponse().isSuccessful();
+    }
+
+    @Override
     public void delete(String id) {
         client.deleteItem(request -> request.tableName(table).key(Map.of("id", value(id))));
     }

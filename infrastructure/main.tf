@@ -86,10 +86,19 @@ resource "aws_dynamodb_table" "files" {
     name = "expiresAt"
     type = "N"
   }
+  attribute {
+    name = "storageKey"
+    type = "S"
+  }
   global_secondary_index {
     name            = "expiration-bucket-index"
     hash_key        = "expirationBucket"
     range_key       = "expiresAt"
+    projection_type = "ALL"
+  }
+  global_secondary_index {
+    name            = "storage-key-index"
+    hash_key        = "storageKey"
     projection_type = "ALL"
   }
   ttl {

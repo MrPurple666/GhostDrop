@@ -1,4 +1,4 @@
-.PHONY: setup start stop infrastructure serve backend frontend test test-backend test-frontend clean
+.PHONY: setup start stop infrastructure serve dev backend frontend test test-backend test-frontend clean
 
 setup:
 	cd frontend && npm ci --ignore-scripts
@@ -21,6 +21,9 @@ frontend:
 
 serve: frontend
 	node scripts/dev-server.mjs
+
+dev:
+	./scripts/dev.sh
 
 test: test-backend test-frontend
 

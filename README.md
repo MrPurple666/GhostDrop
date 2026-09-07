@@ -55,6 +55,16 @@ confirm → download → delete before deploying.
 
 ### Steps
 
+Fastest path — starts Floci if needed, installs deps, provisions infrastructure
+**only on the first run**, then serves:
+
+```sh
+./scripts/dev.sh          # or: make dev
+./scripts/dev.sh --provision   # force a full repackage + terraform apply
+```
+
+Or step by step:
+
 ```sh
 make setup          # install frontend dependencies (npm ci)
 make start          # start the Floci emulator (alias for: floci start)

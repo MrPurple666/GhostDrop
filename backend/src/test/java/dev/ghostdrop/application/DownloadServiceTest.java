@@ -36,6 +36,7 @@ class DownloadServiceTest {
             return Optional.of(file);
         }
         public boolean markAvailable(String storageKey) { return false; }
+        public java.util.List<TemporaryFile> findExpired(Instant now) { return java.util.List.of(); }
         public void delete(String id) { file = null; }
     }
 }

@@ -52,6 +52,15 @@ public final class DynamoDbFileRepository implements FileRepository {
     }
 
     @Override
+    public java.util.List<TemporaryFile> findExpired(Instant now) {
+        var files = new java.util.ArrayList<TemporaryFile>();
+        for (var bucket : java.util.List.of(EXPIRATION_BUCKET.format(now.minusSeconds(3600)), EXPIRATION_BUCKET.format(now))) {
+            files.addAll(client.query(request -> request.tableName(table).indexName("expiration-bucket-index").keyConditionExpression("expirationBucket = :bucket AND expiresAt <= :now").expressionAttributeValues(Map.of(":bucket", value(bucket), ":now", number(now.getEpochSecond())))).items().stream().map(this::file).toList());
+        }
+        return files;
+    }
+
+    @Override
     public void delete(String id) {
         client.deleteItem(request -> request.tableName(table).key(Map.of("id", value(id))));
     }

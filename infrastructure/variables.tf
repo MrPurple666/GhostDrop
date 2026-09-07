@@ -14,6 +14,12 @@ variable "aws_endpoint_url" {
   nullable = true
 }
 
+variable "public_endpoint_url" {
+  type     = string
+  default  = null
+  nullable = true
+}
+
 variable "allowed_origin" {
   type    = string
   default = "http://localhost:5173"

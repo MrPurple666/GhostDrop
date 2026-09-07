@@ -153,7 +153,7 @@ resource "aws_lambda_function" "handlers" {
         confirm  = "dev.ghostdrop.api.UploadConfirmationHandler::handleRequest"
         cleanup  = "dev.ghostdrop.api.ExpiredFileCleanupHandler::handleRequest"
       }[each.key]
-    }, var.aws_endpoint_url == null ? {} : { GHOSTDROP_AWS_ENDPOINT_URL = var.aws_endpoint_url })
+    }, var.aws_endpoint_url == null ? {} : { GHOSTDROP_AWS_ENDPOINT_URL = var.aws_endpoint_url }, var.public_endpoint_url == null ? {} : { GHOSTDROP_PUBLIC_S3_ENDPOINT = var.public_endpoint_url })
   }
 }
 

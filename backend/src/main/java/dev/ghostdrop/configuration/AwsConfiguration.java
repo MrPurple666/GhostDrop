@@ -21,7 +21,7 @@ public final class AwsConfiguration {
     }
     public static S3Presigner presigner() {
         var builder = S3Presigner.builder().region(REGION);
-        var endpoint = endpoint();
+        var endpoint = publicEndpoint();
         if (endpoint != null && !endpoint.isBlank()) builder.endpointOverride(URI.create(endpoint)).credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test"))).serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build());
         return builder.build();
     }
@@ -34,4 +34,5 @@ public final class AwsConfiguration {
     }
 
     private static String endpoint() { return System.getenv().getOrDefault("GHOSTDROP_AWS_ENDPOINT_URL", System.getenv("AWS_ENDPOINT_URL")); }
+    private static String publicEndpoint() { return System.getenv().getOrDefault("GHOSTDROP_PUBLIC_S3_ENDPOINT", endpoint()); }
 }

@@ -45,6 +45,11 @@ public final class DynamoDbFileRepository implements FileRepository {
     }
 
     @Override
+    public void delete(String id) {
+        client.deleteItem(request -> request.tableName(table).key(Map.of("id", value(id))));
+    }
+
+    @Override
     public void save(TemporaryFile file) {
         client.putItem(request -> request.tableName(table).item(values(file)));
     }

@@ -44,5 +44,6 @@ class UploadServiceTest {
         public Optional<TemporaryFile> findById(String id) { return Optional.ofNullable(file).filter(value -> value.id().equals(id)); }
         public Optional<TemporaryFile> reserveDownload(String id, Instant now) { return Optional.empty(); }
         public void save(TemporaryFile value) { file = value; }
+        public void delete(String id) { file = null; }
     }
 }

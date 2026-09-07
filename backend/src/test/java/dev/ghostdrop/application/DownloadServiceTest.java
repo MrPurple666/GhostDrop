@@ -35,5 +35,6 @@ class DownloadServiceTest {
             file = new TemporaryFile(file.id(), file.storageKey(), file.originalFileName(), file.contentType(), file.fileSize(), file.createdAt(), file.expiresAt(), file.downloadCount() + 1, file.maxDownloads(), file.passwordHash(), file.deletionTokenHash(), file.status());
             return Optional.of(file);
         }
+        public void delete(String id) { file = null; }
     }
 }

@@ -32,7 +32,7 @@ public final class S3StorageService implements StorageService {
     public String createUploadUrl(String storageKey, String contentType, long fileSize) {
         PresignedPutObjectRequest request = presigner.presignPutObject(PutObjectPresignRequest.builder()
                 .signatureDuration(uploadLifetime)
-                .putObjectRequest(PutObjectRequest.builder().bucket(bucket).key(storageKey).contentType(contentType).build())
+                .putObjectRequest(PutObjectRequest.builder().bucket(bucket).key(storageKey).contentType(contentType).contentLength(fileSize).build())
                 .build());
         return request.url().toString();
     }

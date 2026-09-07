@@ -14,6 +14,7 @@ provider "aws" {
   skip_requesting_account_id  = var.aws_endpoint_url != null
   s3_use_path_style           = var.aws_endpoint_url != null
   endpoints {
+    apigatewayv2 = var.aws_endpoint_url
     apigateway = var.aws_endpoint_url
     cloudwatch = var.aws_endpoint_url
     dynamodb   = var.aws_endpoint_url

@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+target/
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+.tools/
+.DS_Store

@@ -34,7 +34,6 @@ public final class ExpiredFileCleanupHandler implements RequestHandler<Map<Strin
                 files.delete(file.id());
                 deleted++;
             } catch (Exception exception) {
-                // A later idempotent cleanup run retries the object deletion.
                 failed++;
                 System.err.println(
                         "cleanup failed id="

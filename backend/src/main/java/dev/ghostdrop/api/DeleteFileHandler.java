@@ -1,5 +1,6 @@
 package dev.ghostdrop.api;
 
+import static dev.ghostdrop.api.HandlerEnvironment.required;
 import static dev.ghostdrop.api.HttpResponses.internalError;
 import static dev.ghostdrop.api.HttpResponses.response;
 
@@ -23,5 +24,4 @@ public final class DeleteFileHandler implements RequestHandler<APIGatewayV2HTTPE
         try { return deletion.delete(event.getPathParameters().get("id"), token) ? response(204, "") : response(401, "{\"code\":\"UNAUTHORIZED\",\"message\":\"Deletion authorization failed.\"}"); }
         catch (Exception exception) { return internalError(); }
     }
-    private static String required(String name) { var value = System.getenv(name); if (value == null || value.isBlank()) throw new IllegalStateException(name + " is required"); return value; }
 }

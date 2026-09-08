@@ -1,5 +1,7 @@
 package dev.ghostdrop.api;
 
+import static dev.ghostdrop.api.HandlerEnvironment.number;
+import static dev.ghostdrop.api.HandlerEnvironment.required;
 import static dev.ghostdrop.api.HttpResponses.internalError;
 import static dev.ghostdrop.api.HttpResponses.response;
 
@@ -37,6 +39,4 @@ public final class CreateDownloadHandler implements RequestHandler<APIGatewayV2H
     }
 
     private static String json(Object value) { try { return JSON.writeValueAsString(value); } catch (Exception exception) { throw new IllegalStateException(exception); } }
-    private static String required(String name) { var value = System.getenv(name); if (value == null || value.isBlank()) throw new IllegalStateException(name + " is required"); return value; }
-    private static long number(String name, long defaultValue) { var value = System.getenv(name); return value == null || value.isBlank() ? defaultValue : Long.parseLong(value); }
 }

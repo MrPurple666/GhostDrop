@@ -1,5 +1,7 @@
 package dev.ghostdrop.api;
 
+import static dev.ghostdrop.api.HandlerEnvironment.required;
+
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import dev.ghostdrop.configuration.AwsConfiguration;
@@ -24,5 +26,4 @@ public final class ExpiredFileCleanupHandler implements RequestHandler<Map<Strin
         }
         return null;
     }
-    private static String required(String name) { var value = System.getenv(name); if (value == null || value.isBlank()) throw new IllegalStateException(name + " is required"); return value; }
 }

@@ -70,6 +70,22 @@ resource "aws_s3_bucket_cors_configuration" "files" {
   }
 }
 
+# Backstop for objects the cleanup Lambda never removed (31 d > 30 d max lifetime).
+resource "aws_s3_bucket_lifecycle_configuration" "files" {
+  bucket = aws_s3_bucket.files.id
+
+  rule {
+    id     = "expire-orphans"
+    status = "Enabled"
+    filter {
+      prefix = "uploads/"
+    }
+    expiration {
+      days = 31
+    }
+  }
+}
+
 resource "aws_dynamodb_table" "files" {
   name         = local.table_name
   billing_mode = "PAY_PER_REQUEST"
@@ -122,6 +138,18 @@ resource "aws_iam_role_policy" "lambda" {
   ] })
 }
 
+resource "aws_iam_role_policy" "lambda_dlq" {
+  count = var.aws_endpoint_url == null ? 1 : 0
+  name  = "${local.prefix}-lambda-dlq"
+  role  = aws_iam_role.lambda.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = [aws_sqs_queue.confirm_dlq[0].arn] }
+    ]
+  })
+}
+
 resource "aws_lambda_function" "handlers" {
   for_each      = local.lambda_names
   function_name = each.value
@@ -139,6 +167,12 @@ resource "aws_lambda_function" "handlers" {
   source_code_hash = filebase64sha256(var.lambda_artifact)
   timeout          = 30
   memory_size      = 1024
+  dynamic "dead_letter_config" {
+    for_each = var.aws_endpoint_url == null && each.key == "confirm" ? [aws_sqs_queue.confirm_dlq[0].arn] : []
+    content {
+      target_arn = dead_letter_config.value
+    }
+  }
   environment {
     variables = merge({
       FILES_TABLE              = aws_dynamodb_table.files.name
@@ -197,13 +231,47 @@ resource "aws_apigatewayv2_stage" "api" {
   name        = "$default"
   auto_deploy = true
 
-  # Route-wide token bucket (shared by all clients; API Gateway v2 has no per-IP throttle).
-  # 10 req/s burst 20 keeps legit uploads flowing while capping abuse floods on the unauthenticated route.
+  # Route-wide token bucket; API Gateway v2 has no per-IP throttle (WAF covers that).
   route_settings {
     route_key              = "POST /api/v1/uploads"
     throttling_rate_limit  = 10
     throttling_burst_limit = 20
   }
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api_access.arn
+    format = jsonencode({
+      requestId = "$context.requestId"
+      routeKey  = "$context.routeKey"
+      status    = "$context.status"
+      method    = "$context.httpMethod"
+      path      = "$context.path"
+      latencyMs = "$context.responseLatency"
+      ip        = "$context.identity.sourceIp"
+    })
+  }
+}
+
+resource "aws_cloudwatch_log_group" "api_access" {
+  name              = "/aws/apigateway/${local.prefix}-api"
+  retention_in_days = 7
+}
+
+# Production only: the emulator does not emit gateway metrics.
+resource "aws_cloudwatch_metric_alarm" "api_5xx" {
+  count               = var.aws_endpoint_url == null ? 1 : 0
+  alarm_name          = "${local.prefix}-api-5xx"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = "2"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "1"
+  namespace           = "AWS/ApiGateway"
+  metric_name         = "5xx"
+  dimensions = {
+    ApiId = aws_apigatewayv2_api.api.id
+  }
+  alarm_description = "API Gateway returned at least one 5xx in the last 10 minutes"
 }
 
 resource "aws_s3_bucket_notification" "confirm" {
@@ -214,6 +282,72 @@ resource "aws_s3_bucket_notification" "confirm" {
     filter_prefix       = "uploads/"
   }
   depends_on = [aws_lambda_permission.s3]
+}
+
+# Per-IP rate rule (route throttling above is aggregate). Production only.
+resource "aws_wafv2_web_acl" "api" {
+  count       = var.aws_endpoint_url == null ? 1 : 0
+  name        = "${local.prefix}-api"
+  description = "Per-IP rate limit for the GhostDrop API"
+  scope       = "REGIONAL"
+
+  default_action {
+    allow {}
+  }
+
+  rule {
+    name     = "rate-limit"
+    priority = 1
+    action {
+      block {}
+    }
+    statement {
+      rate_based_statement {
+        limit              = 500
+        aggregate_key_type = "IP"
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "ghostdrop-rate-limit"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "ghostdrop-waf"
+    sampled_requests_enabled   = true
+  }
+}
+
+resource "aws_wafv2_web_acl_association" "api" {
+  count        = var.aws_endpoint_url == null ? 1 : 0
+  resource_arn = aws_apigatewayv2_stage.api.arn
+  web_acl_arn  = aws_wafv2_web_acl.api[0].arn
+}
+
+# Catches confirm-handler events Lambda drops after retries. Production only.
+resource "aws_sqs_queue" "confirm_dlq" {
+  count                     = var.aws_endpoint_url == null ? 1 : 0
+  name                      = "${local.prefix}-confirm-dlq"
+  message_retention_seconds = 86400
+}
+
+resource "aws_cloudwatch_metric_alarm" "confirm_dlq" {
+  count               = var.aws_endpoint_url == null ? 1 : 0
+  alarm_name          = "${local.prefix}-confirm-dlq"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "1"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "0"
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions = {
+    QueueName = aws_sqs_queue.confirm_dlq[0].name
+  }
+  alarm_description = "S3 confirmation events are landing on the dead-letter queue"
 }
 
 resource "aws_lambda_permission" "s3" {
@@ -242,8 +376,6 @@ resource "aws_lambda_permission" "cleanup" {
   source_arn    = aws_cloudwatch_event_rule.cleanup.arn
 }
 
-# Observability for the cleanup run: every "cleanup failed …" stderr line (the
-# Lambda runtime streams stderr to CloudWatch Logs) counts as one failure metric.
 # Skipped under the local emulator, which does not implement metric filters.
 resource "aws_cloudwatch_log_metric_filter" "cleanup_failures" {
   count          = var.aws_endpoint_url == null ? 1 : 0

@@ -3,8 +3,16 @@ services:
     image: floci/floci:latest
     ports:
       - "4566:4566"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - floci-data:/app/data
+    environment:
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:4566/_localstack/health"]
       interval: 5s
       timeout: 3s
       retries: 20
+
+volumes:
+  floci-data:

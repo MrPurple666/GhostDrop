@@ -36,9 +36,11 @@ public final class CreateDownloadHandler
             new DownloadService(
                     new DynamoDbFileRepository(
                             AwsConfiguration.dynamoDb(), required("FILES_TABLE")),
-                    key ->
+                    file ->
                             storage.createDownloadUrl(
-                                    key, Duration.ofSeconds(DOWNLOAD_LIFETIME_SECONDS)),
+                                    file.storageKey(),
+                                    file.originalFileName(),
+                                    Duration.ofSeconds(DOWNLOAD_LIFETIME_SECONDS)),
                     new Argon2PasswordHasher()::verify,
                     Clock.systemUTC());
 

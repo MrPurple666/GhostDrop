@@ -37,8 +37,14 @@ public final class S3StorageService implements StorageService {
         return request.url().toString();
     }
 
-    public String createDownloadUrl(String storageKey, Duration lifetime) {
-        return presigner.presignGetObject(GetObjectPresignRequest.builder().signatureDuration(lifetime).getObjectRequest(GetObjectRequest.builder().bucket(bucket).key(storageKey).build()).build()).url().toString();
+    public String createDownloadUrl(String storageKey, String originalFileName, Duration lifetime) {
+        return presigner.presignGetObject(GetObjectPresignRequest.builder().signatureDuration(lifetime).getObjectRequest(GetObjectRequest.builder().bucket(bucket).key(storageKey).responseContentDisposition("attachment; filename=\"" + sanitize(originalFileName) + "\"").build()).build()).url().toString();
+    }
+
+    /** Keeps the user-supplied file name from smuggling header bytes into the signed download response. */
+    private static String sanitize(String fileName) {
+        var name = fileName.replaceAll("[\"\\\\\r\n]", "_").trim();
+        return name.length() <= 200 ? name : name.substring(0, 200);
     }
 
     public void delete(String storageKey) {

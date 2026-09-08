@@ -18,7 +18,7 @@ class DownloadServiceTest {
     @Test
     void reserves_only_one_final_download_under_concurrency() throws Exception {
         var repository = new ReservingRepository(new TemporaryFile("id", "uploads/key", "report.pdf", "application/pdf", 10, Instant.EPOCH, Instant.MAX, 2, 3, null, "token", FileStatus.AVAILABLE));
-        var service = new DownloadService(repository, key -> "https://download.example/" + key, (password, hash) -> true, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+        var service = new DownloadService(repository, file -> "https://download.example/" + file.storageKey(), (password, hash) -> true, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
         try (var executor = Executors.newFixedThreadPool(5)) {
             var tasks = java.util.stream.IntStream.range(0, 5).mapToObj(ignored -> executor.submit(() -> service.create("id", null).isPresent())).toList();
             assertEquals(1, tasks.stream().filter(task -> { try { return task.get(); } catch (Exception exception) { throw new AssertionError(exception); } }).count());

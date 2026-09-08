@@ -9,7 +9,9 @@ client is served separately.
 
 ## Demo
 
-<video src="docs/demo.mp4" controls width="720"></video>
+[▶ Watch the demo (1 min)](docs/demo.mp4)
+
+GitHub opens the repository file viewer, which plays the video inline.
 
 ## How it works
 

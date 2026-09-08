@@ -1,5 +1,8 @@
 package dev.ghostdrop.api;
 
+import static dev.ghostdrop.api.HttpResponses.internalError;
+import static dev.ghostdrop.api.HttpResponses.response;
+
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayV2HTTPEvent;
@@ -14,7 +17,6 @@ import dev.ghostdrop.infrastructure.s3.S3StorageService;
 import dev.ghostdrop.infrastructure.security.Argon2PasswordHasher;
 import java.time.Clock;
 import java.time.Duration;
-import java.util.Map;
 
 public final class CreateUploadHandler implements RequestHandler<APIGatewayV2HTTPEvent, APIGatewayV2HTTPResponse> {
     private static final ObjectMapper JSON = new ObjectMapper().findAndRegisterModules();
@@ -30,11 +32,10 @@ public final class CreateUploadHandler implements RequestHandler<APIGatewayV2HTT
             return response(400, "{\"code\":\"INVALID_REQUEST\",\"message\":\"The upload request is invalid.\"}");
         } catch (Exception exception) {
             exception.printStackTrace();
-            return response(500, "{\"code\":\"INTERNAL_ERROR\",\"message\":\"The request could not be completed.\"}");
+            return internalError();
         }
     }
 
-    private static APIGatewayV2HTTPResponse response(int status, String body) { return APIGatewayV2HTTPResponse.builder().withStatusCode(status).withHeaders(Map.of("content-type", "application/json", "access-control-allow-origin", System.getenv().getOrDefault("GHOSTDROP_ALLOWED_ORIGIN", "http://localhost:5173"))).withBody(body).build(); }
     private static String required(String name) { var value = System.getenv(name); if (value == null || value.isBlank()) throw new IllegalStateException(name + " is required"); return value; }
     private static long number(String name, long defaultValue) { var value = System.getenv(name); return value == null || value.isBlank() ? defaultValue : Long.parseLong(value); }
 }

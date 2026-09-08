@@ -1,5 +1,8 @@
 package dev.ghostdrop.api;
 
+import static dev.ghostdrop.api.HttpResponses.internalError;
+import static dev.ghostdrop.api.HttpResponses.response;
+
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayV2HTTPEvent;
@@ -26,14 +29,14 @@ public final class CreateDownloadHandler implements RequestHandler<APIGatewayV2H
         try {
             JsonNode body = event.getBody() == null || event.getBody().isBlank() ? JSON.createObjectNode() : JSON.readTree(event.getBody());
             var url = downloads.create(event.getPathParameters().get("id"), body.path("password").asText(null));
-            return url.map(value -> response(200, json(Map.of("downloadUrl", value, "expiresInSeconds", DOWNLOAD_LIFETIME_SECONDS)))).orElseGet(() -> response(404, "{\"code\":\"FILE_NOT_FOUND\",\"message\":\"This GhostDrop is no longer available.\"}"));
+            return url.map(value -> response(200, json(Map.of("downloadUrl", value, "expiresInSeconds", DOWNLOAD_LIFETIME_SECONDS))))
+                    .orElseGet(HttpResponses::notFound);
         } catch (Exception exception) {
-            return response(500, "{\"code\":\"INTERNAL_ERROR\",\"message\":\"The request could not be completed.\"}");
+            return internalError();
         }
     }
 
     private static String json(Object value) { try { return JSON.writeValueAsString(value); } catch (Exception exception) { throw new IllegalStateException(exception); } }
-    private static APIGatewayV2HTTPResponse response(int status, String body) { return APIGatewayV2HTTPResponse.builder().withStatusCode(status).withHeaders(Map.of("content-type", "application/json", "access-control-allow-origin", System.getenv().getOrDefault("GHOSTDROP_ALLOWED_ORIGIN", "http://localhost:5173"))).withBody(body).build(); }
     private static String required(String name) { var value = System.getenv(name); if (value == null || value.isBlank()) throw new IllegalStateException(name + " is required"); return value; }
     private static long number(String name, long defaultValue) { var value = System.getenv(name); return value == null || value.isBlank() ? defaultValue : Long.parseLong(value); }
 }

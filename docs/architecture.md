@@ -6,30 +6,30 @@ the only way to mint short-lived presigned S3 URLs.
 
 ## Components
 
-```
-                 ┌──────────────────────────── Browser (React SPA)
-                 │  upload view          share/download view (/d/:id)
-                 │     │                         │
-                 │     ▼                         ▼
-        presigned PUT (S3)              GET /api/v1/files/{id}
-                                        POST .../downloads  (password?)
-                 │                             │
-                 ▼                             ▼
-   ┌───────────────────────┐        ┌─────────────────────────┐
-   │ S3  ghostdrop-*-files │◄──event│ API Gateway HTTP API v2 │
-   │  uploads/<key>        │ ObjectC│   /api/v1/*             │
-   └───────────────────────┘ reated │                         │
-                 │                   └───────────┬─────────────┘
-                 │                               │ Java 26 handlers
-                 ▼                               ▼
-   ┌───────────────────────┐        ┌─────────────────────────┐
-   │ confirm handler       │        │ DynamoDB ghostdrop-*-files
-   │ PENDING → AVAILABLE   │        │  id (PK), storageKey (GSI),
-   └───────────────────────┘        │  expiresAt (N, TTL) + hour
-                                    │  bucket GSI, status, counts
-   ┌───────────────────────┐        └─────────────────────────┘
-   │ EventBridge (5 min)   │──► cleanup handler: delete expired
-   └───────────────────────┘     S3 object + metadata row
+```mermaid
+flowchart LR
+    subgraph Browser["Browser (React SPA)"]
+        Upload["upload view"]
+        Share["share / download view (/d/:id)"]
+    end
+    S3[("S3 · ghostdrop-*-files<br/>uploads/&lt;random key&gt;")]
+    Api["API Gateway · HTTP API v2<br/>/api/v1/*"]
+    Handlers["Java 26 Lambda handlers"]
+    Dynamo[("DynamoDB · ghostdrop-*-files<br/>id (PK) · storageKey (GSI) · status<br/>expiresAt (TTL) + hour-bucket GSI · counts")]
+    Confirm["confirm handler<br/>PENDING → AVAILABLE"]
+    Cleanup["cleanup handler<br/>delete expired S3 object + metadata"]
+    Clock["EventBridge · every 5 min"]
+
+    Upload -- "presigned PUT (bytes)" --> S3
+    Share -- "GET /files/{id} · POST /files/{id}/downloads" --> Api
+    Api --> Handlers
+    Handlers -- "create · reserve · delete" --> Dynamo
+    Share -- "presigned GET (bytes)" --> S3
+    S3 -- "ObjectCreated event" --> Confirm
+    Confirm -- "flip status" --> Dynamo
+    Clock --> Cleanup
+    Cleanup --> S3
+    Cleanup --> Dynamo
 ```
 
 ## Backend layers

@@ -81,6 +81,12 @@ bytes exist. S3 emits `ObjectCreated` for `uploads/*`, the confirm handler
 finds the row by `storageKey` and flips it `AVAILABLE`. The key is random, so a
 spurious event cannot confirm another upload.
 
+Confirmation is an async invocation; if the handler keeps failing, Lambda's
+retries eventually land the event on an SQS DLQ (`confirm_dlq`) instead of
+dropping it silently. An alarm fires when the queue is non-empty; recovery is
+operator-driven (fix the cause and re-drive), while the S3 lifecycle rule and
+DynamoDB TTL expire any upload that stays `PENDING_UPLOAD` regardless.
+
 ## Cleanup
 
 `findExpired(now)` queries the hour-bucket GSI for the current and previous
@@ -88,6 +94,21 @@ hour with `expiresAt <= now`, then deletes each S3 object and row. EventBridge
 invokes it every five minutes. It is idempotent: a failed delete is retried on
 a later pass. DynamoDB TTL on `expiresAt` is the physical safety net, not the
 access-control mechanism (downloads are always refused at reservation time).
+
+Each run logs a structured summary and one line per failed object to stderr
+(the Lambda runtime streams it to CloudWatch Logs); a metric filter counts
+failures into `GhostDrop/CleanupFailures` and alarms after any failure in 10
+minutes. A lifecycle rule additionally expires `uploads/*` after 31 days (the
+maximum lifetime is 30), covering rows deleted before their object.
+
+## API protection and observation
+
+The gateway throttles `POST /api/v1/uploads` (10 req/s, burst 20) and, in
+production, a WAF rate rule caps each client IP at 500 requests per 5 minutes
+— the route throttle is aggregate, the WAF rule is per-IP. Gateway access logs
+(JSON: request id, route, status, latency, source IP) stream to CloudWatch
+with 7-day retention, and an alarm fires on any 5xx. All four are
+production-only resources; the local emulator does not model them.
 
 ## Extension point: malware scanning
 

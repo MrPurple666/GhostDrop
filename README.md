@@ -21,7 +21,8 @@ client is served separately.
    bytes directly from S3.
 5. Every download is a single atomic DynamoDB reservation that enforces the
    expiry and remaining-download budget. A scheduled cleanup deletes the object
-   and the metadata; DynamoDB TTL is the physical safety net.
+   and the metadata; DynamoDB TTL and an S3 lifecycle rule are the physical
+   safety net, and cleanup failures page through CloudWatch alarms.
 
 ```mermaid
 flowchart LR
@@ -92,6 +93,9 @@ Later runs are incremental.
 ### Verify it works
 
 - `make test` runs backend (Maven) and frontend (Vitest) suites.
+- `./scripts/e2e.sh` (or `make e2e`) drives the full emulated path over HTTP —
+  upload, S3 confirm, download with the original file name, download limit,
+  authorized delete. CI runs it on `main` pushes.
 - Open `http://localhost:5173`, drag a file onto the folder, set options, and
   create a GhostDrop. Copy the share link, open `/d/{id}` in a new tab, download.
 - Tip: switch the top bar between **OLED** (dark) and **PAPER** (light) themes.

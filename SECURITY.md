@@ -37,6 +37,11 @@ controls, the design intent, and the boundaries that must not be weakened.
   > Floci's emulator does not enforce the signed content-length; see
   > [docs/local-development.md](docs/local-development.md).
 - Upload and download URLs are short-lived (`900s` / `300s` by default).
+- The download URL is presigned with the original file name in
+  `response-content-disposition`, sanitized against header injection.
+- The unauthenticated create route is rate-limited at the gateway (10 req/s
+  burst 20, aggregate) and, in production, per client IP by a WAF rate rule
+  (500 requests / 5 min). See [docs/under-the-hood.md](docs/under-the-hood.md).
 
 ### Password and limit enforcement
 
@@ -60,8 +65,14 @@ controls, the design intent, and the boundaries that must not be weakened.
 - A file becomes available only through an S3 `ObjectCreated` event whose key
   matches the pending record's storage key (`markAvailable` flips
   `PENDING_UPLOAD → AVAILABLE` atomically).
+- Confirmation is an async invocation, so repeated failures land on an SQS DLQ
+  with an alarm, rather than disappearing after Lambda's retries.
 - Cleanup runs on a schedule, deleting expired objects and rows. It is
   idempotent: failures are retried on the next pass, never double-deleted.
+- Cleanup failures are visible: each run logs a structured summary and one
+  line per failed object, and a metric-filter alarm fires on any failure.
+- Physical backstops for deletion: DynamoDB TTL on `expiresAt` and an S3
+  lifecycle rule that expires `uploads/*` after 31 days.
 
 ## Boundaries and accepted risks
 

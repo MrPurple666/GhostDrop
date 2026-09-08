@@ -80,6 +80,12 @@ behavior and verified there:
 3. **`localhost.floci.io` inside Lambda containers** resolves to `::1` (the
    container itself), which is why SDK clients target `host.docker.internal`
    instead.
+4. **Rate-limit, WAF, DLQ and alarm resources are skipped or inert.**
+   `route_settings` throttling applies, but the WAF rule, the SQS DLQ, the
+   access-log alarm and the metric-filter alarms are gated on a production
+   endpoint (`count = aws_endpoint_url == null ? 1 : 0`), and the emulator does
+   not implement metric filters. E2E still exercises the full data path
+   (upload → S3 confirm → download → limit → delete) over real HTTP.
 
 ## Notes
 
@@ -87,3 +93,5 @@ behavior and verified there:
   before the endpoint variables were wired) and stays warm between runs.
 - `make test` runs `mvn test` and Vitest. Validate Terraform with
   `./scripts/terraform.sh validate`.
+- `make e2e` (or `./scripts/e2e.sh`) provisions if needed and drives the whole
+  emulated flow over HTTP; CI runs it on `main` pushes.

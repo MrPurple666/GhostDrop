@@ -1,4 +1,4 @@
-.PHONY: setup start stop infrastructure serve dev backend frontend test test-backend test-frontend clean
+.PHONY: setup start stop infrastructure serve dev backend frontend test test-backend test-frontend e2e clean
 
 setup:
 	cd frontend && npm ci --ignore-scripts
@@ -32,6 +32,9 @@ test-backend:
 
 test-frontend:
 	cd frontend && npm test
+
+e2e:
+	./scripts/e2e.sh
 
 clean:
 	cd backend && mvn clean

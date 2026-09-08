@@ -1,5 +1,7 @@
 # GhostDrop
 
+<p align="center"><img src="docs/logo.png" width="360" alt="GhostDrop"></p>
+
 Temporary file sharing that makes files vanish. A file is uploaded, a link is
 shared, and the file expires or is consumed — then it is destroyed.
 

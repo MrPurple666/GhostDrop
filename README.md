@@ -23,13 +23,26 @@ client is served separately.
    expiry and remaining-download budget. A scheduled cleanup deletes the object
    and the metadata; DynamoDB TTL is the physical safety net.
 
-```
-Browser ── presigned S3 PUT/GET ─────────────► S3 (private bucket)
-   │                                            ▲
-   └─ API Gateway ──► Java Lambda handlers       │
-                       ├─ DynamoDB (metadata + atomic reservations)
-                       ├─ S3 event ─► confirm handler
-                       └─ EventBridge every 5 min ─► cleanup handler
+```mermaid
+flowchart LR
+    Browser["Browser (React SPA)"]
+    Gateway["API Gateway · /api/v1/*"]
+    Handlers["Java Lambda handlers"]
+    Dynamo[("DynamoDB · metadata + atomic reservations")]
+    Bucket[("S3 · private bucket")]
+    Confirm["confirm handler"]
+    Cleanup["cleanup handler"]
+    Clock["EventBridge · every 5 min"]
+
+    Browser -- "presigned PUT / GET" --> Bucket
+    Browser -- REST --> Gateway
+    Gateway --> Handlers
+    Handlers -- "create · reserve · delete" --> Dynamo
+    Bucket -- "ObjectCreated event" --> Confirm
+    Confirm -- "mark AVAILABLE" --> Dynamo
+    Clock --> Cleanup
+    Cleanup -- "delete expired object + metadata" --> Bucket
+    Cleanup --> Dynamo
 ```
 
 ## Stack

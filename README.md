@@ -8,14 +8,7 @@ metadata; S3 transfers bytes only through presigned URLs. A React + TypeScript
 client is served separately.
 
 ## Demo
-
-[![Watch the demo](docs/demo-poster.png)](docs/demo.mp4)
-
-Click to play the 1-minute walkthrough (opens the GitHub file viewer).
-
-> GitHub cannot play repository-hosted videos inline in a README. For a true
-> inline player, drag `docs/demo.mp4` into the README editor on github.com —
-> it uploads to `github.com/user-attachments/...` and renders as a video.
+https://github.com/user-attachments/assets/34e4a2c8-4515-4914-bed6-161e285699a7
 
 ## How it works
 

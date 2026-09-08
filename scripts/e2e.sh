@@ -1,8 +1,5 @@
 #!/usr/bin/env sh
-# End-to-end check against the Floci-emulated stack: real API Gateway -> Lambda
-# handlers -> DynamoDB/S3, including the S3 event that confirms an upload.
-# Usage:  ./scripts/e2e.sh [--provision]
-#   --provision   force a full repackage + terraform apply first (slow)
+# E2E over real HTTP against Floci. Usage: ./scripts/e2e.sh [--provision]
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -85,8 +82,8 @@ say "confirmed available"
 code=$(api POST "/api/v1/files/$id/downloads" '{}'); [ "$code" = 200 ] || die "create download: got $code"
 download_url=$(json_field downloadUrl)
 headers=$(curl -s -D - -o /tmp/e2e-download "$download_url")
-grep -qi 'HTTP/1.1 200' <<<"$headers" || die "download GET failed"
-grep -qi "content-disposition: attachment; filename=\"$NAME\"" <<<"$headers" || die "download missing filename disposition"
+printf '%s' "$headers" | grep -qi 'HTTP/1.1 200' || die "download GET failed"
+printf '%s' "$headers" | grep -qi "content-disposition: attachment; filename=\"$NAME\"" || die "download missing filename disposition"
 [ "$(cat /tmp/e2e-download)" = "hello world" ] || die "downloaded bytes mismatch"
 say "download preserved name and bytes"
 

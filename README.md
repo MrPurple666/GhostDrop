@@ -7,6 +7,10 @@ Serverless on AWS: API Gateway invokes Java 26 Lambda handlers; DynamoDB stores
 metadata; S3 transfers bytes only through presigned URLs. A React + TypeScript
 client is served separately.
 
+## Demo
+
+<video src="docs/demo.mp4" controls width="720"></video>
+
 ## How it works
 
 1. The sender selects a file and options (lifetime, optional password, download

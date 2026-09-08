@@ -242,3 +242,31 @@ resource "aws_lambda_permission" "cleanup" {
   source_arn    = aws_cloudwatch_event_rule.cleanup.arn
 }
 
+# Observability for the cleanup run: every "cleanup failed …" stderr line (the
+# Lambda runtime streams stderr to CloudWatch Logs) counts as one failure metric.
+# Skipped under the local emulator, which does not implement metric filters.
+resource "aws_cloudwatch_log_metric_filter" "cleanup_failures" {
+  count          = var.aws_endpoint_url == null ? 1 : 0
+  name           = "${local.prefix}-cleanup-failures"
+  log_group_name = "/aws/lambda/${aws_lambda_function.handlers["cleanup"].function_name}"
+  pattern        = "\"cleanup failed\""
+  metric_transformation {
+    name      = "CleanupFailures"
+    namespace = "GhostDrop"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "cleanup_failures" {
+  count               = var.aws_endpoint_url == null ? 1 : 0
+  alarm_name          = "${local.prefix}-cleanup-failures"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = "2"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "1"
+  namespace           = "GhostDrop"
+  metric_name         = "CleanupFailures"
+  alarm_description   = "Expired-file cleanup failed at least once in the last 10 minutes"
+}
+

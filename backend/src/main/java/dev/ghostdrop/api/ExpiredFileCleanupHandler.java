@@ -25,14 +25,33 @@ public final class ExpiredFileCleanupHandler implements RequestHandler<Map<Strin
 
     @Override
     public Void handleRequest(Map<String, Object> event, Context context) {
-        for (var file : files.findExpired(Clock.systemUTC().instant())) {
+        var expired = files.findExpired(Clock.systemUTC().instant());
+        int deleted = 0;
+        int failed = 0;
+        for (var file : expired) {
             try {
                 storage.delete(file.storageKey());
                 files.delete(file.id());
-            } catch (Exception ignored) {
+                deleted++;
+            } catch (Exception exception) {
                 // A later idempotent cleanup run retries the object deletion.
+                failed++;
+                System.err.println(
+                        "cleanup failed id="
+                                + file.id()
+                                + " storageKey="
+                                + file.storageKey()
+                                + " "
+                                + exception);
             }
         }
+        System.err.println(
+                "cleanup summary expired="
+                        + expired.size()
+                        + " deleted="
+                        + deleted
+                        + " failed="
+                        + failed);
         return null;
     }
 }

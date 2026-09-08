@@ -9,9 +9,13 @@ client is served separately.
 
 ## Demo
 
-[▶ Watch the demo (1 min)](docs/demo.mp4)
+[![Watch the demo](docs/demo-poster.png)](docs/demo.mp4)
 
-GitHub opens the repository file viewer, which plays the video inline.
+Click to play the 1-minute walkthrough (opens the GitHub file viewer).
+
+> GitHub cannot play repository-hosted videos inline in a README. For a true
+> inline player, drag `docs/demo.mp4` into the README editor on github.com —
+> it uploads to `github.com/user-attachments/...` and renders as a video.
 
 ## How it works
 

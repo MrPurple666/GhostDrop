@@ -196,6 +196,14 @@ resource "aws_apigatewayv2_stage" "api" {
   api_id      = aws_apigatewayv2_api.api.id
   name        = "$default"
   auto_deploy = true
+
+  # Route-wide token bucket (shared by all clients; API Gateway v2 has no per-IP throttle).
+  # 10 req/s burst 20 keeps legit uploads flowing while capping abuse floods on the unauthenticated route.
+  route_settings {
+    route_key              = "POST /api/v1/uploads"
+    throttling_rate_limit  = 10
+    throttling_burst_limit = 20
+  }
 }
 
 resource "aws_s3_bucket_notification" "confirm" {
@@ -233,3 +241,4 @@ resource "aws_lambda_permission" "cleanup" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.cleanup.arn
 }
+

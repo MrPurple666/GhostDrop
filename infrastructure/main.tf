@@ -5,6 +5,9 @@ terraform {
   }
 }
 
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
 provider "aws" {
   region                      = var.aws_region
   access_key                  = var.aws_endpoint_url == null ? null : "test"
@@ -23,6 +26,7 @@ provider "aws" {
     lambda       = var.aws_endpoint_url
     logs         = var.aws_endpoint_url
     s3           = var.aws_endpoint_url
+    sts          = var.aws_endpoint_url
   }
 }
 
@@ -37,6 +41,7 @@ locals {
     delete   = "${local.prefix}-delete-file"
     confirm  = "${local.prefix}-confirm-upload"
     cleanup  = "${local.prefix}-cleanup"
+    scan     = "${local.prefix}-scan-result"
   }
 }
 
@@ -50,12 +55,52 @@ resource "aws_s3_bucket_public_access_block" "files" {
   restrict_public_buckets = true
 }
 
+resource "aws_kms_key" "files" {
+  count                   = var.aws_endpoint_url == null ? 1 : 0
+  description             = "Encrypts GhostDrop file objects in ${local.bucket_name}"
+  enable_key_rotation     = true
+  deletion_window_in_days = 7
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "EnableIAMAdmin"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AllowS3UseOfKey"
+        Effect    = "Allow"
+        Principal = { AWS = "*" }
+        Action    = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey", "kms:ReEncryptFrom", "kms:ReEncryptTo", "kms:DescribeKey"]
+        Resource  = "*"
+        Condition = {
+          StringEquals = {
+            "kms:CallerAccount" = data.aws_caller_identity.current.account_id
+            "kms:ViaService"    = "s3.${data.aws_region.current.name}.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_kms_alias" "files" {
+  count         = var.aws_endpoint_url == null ? 1 : 0
+  name          = "alias/ghostdrop-files"
+  target_key_id = aws_kms_key.files[0].key_id
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "files" {
   bucket = aws_s3_bucket.files.id
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = var.aws_endpoint_url == null ? "aws:kms" : "AES256"
+      kms_master_key_id = var.aws_endpoint_url == null ? aws_kms_key.files[0].arn : null
     }
+    bucket_key_enabled = var.aws_endpoint_url == null ? true : false
   }
 }
 
@@ -162,6 +207,7 @@ resource "aws_lambda_function" "handlers" {
     delete   = "dev.ghostdrop.api.DeleteFileHandler::handleRequest"
     confirm  = "dev.ghostdrop.api.UploadConfirmationHandler::handleRequest"
     cleanup  = "dev.ghostdrop.api.ExpiredFileCleanupHandler::handleRequest"
+    scan     = "dev.ghostdrop.api.ScanResultHandler::handleRequest"
   }[each.key] : "bootstrap"
   filename         = var.lambda_artifact
   source_code_hash = filebase64sha256(var.lambda_artifact)
@@ -186,6 +232,7 @@ resource "aws_lambda_function" "handlers" {
         delete   = "dev.ghostdrop.api.DeleteFileHandler::handleRequest"
         confirm  = "dev.ghostdrop.api.UploadConfirmationHandler::handleRequest"
         cleanup  = "dev.ghostdrop.api.ExpiredFileCleanupHandler::handleRequest"
+        scan     = "dev.ghostdrop.api.ScanResultHandler::handleRequest"
       }[each.key]
     }, var.aws_endpoint_url == null ? {} : { GHOSTDROP_AWS_ENDPOINT_URL = var.aws_endpoint_url }, var.public_endpoint_url == null ? {} : { GHOSTDROP_PUBLIC_S3_ENDPOINT = var.public_endpoint_url })
   }
@@ -402,3 +449,137 @@ resource "aws_cloudwatch_metric_alarm" "cleanup_failures" {
   alarm_description   = "Expired-file cleanup failed at least once in the last 10 minutes"
 }
 
+
+resource "aws_s3_bucket_policy" "files" {
+  count  = var.aws_endpoint_url == null ? 1 : 0
+  bucket = aws_s3_bucket.files.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "RequireKmsEncryption"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = ["s3:PutObject"]
+        Resource  = ["${aws_s3_bucket.files.arn}/uploads/*"]
+        Condition = {
+          StringNotEquals = {
+            "s3:x-amz-server-side-encryption" = "aws:kms"
+          }
+        }
+      },
+      {
+        Sid       = "DenySseC"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = ["s3:PutObject"]
+        Resource  = ["${aws_s3_bucket.files.arn}/uploads/*"]
+        Condition = {
+          StringLike = {
+            "s3:x-amz-server-side-encryption-customer-algorithm" = "*"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "guardduty" {
+  count              = var.aws_endpoint_url == null ? 1 : 0
+  name               = "${local.prefix}-guardduty-malware"
+  assume_role_policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Principal = { Service = "malware-protection-plan.guardduty.amazonaws.com" }, Action = "sts:AssumeRole" }] })
+}
+
+resource "aws_iam_role_policy" "guardduty" {
+  count = var.aws_endpoint_url == null ? 1 : 0
+  name  = "${local.prefix}-guardduty-malware"
+  role  = aws_iam_role.guardduty[0].id
+  policy = jsonencode({ Version = "2012-10-17", Statement = [
+    { Effect = "Allow", Action = ["s3:GetObject", "s3:GetObjectVersion", "s3:GetObjectTagging"], Resource = ["${aws_s3_bucket.files.arn}/uploads/*"] },
+    { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.files.arn },
+    { Effect = "Allow", Action = ["events:PutRule", "events:DeleteRule", "events:PutTargets", "events:RemoveTargets", "events:DescribeRule"], Resource = "arn:aws:events:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:rule/DO-NOT-DELETE-AmazonGuardDutyMalwareProtectionS3*" },
+    { Effect = "Allow", Action = ["kms:Decrypt", "kms:GenerateDataKey"], Resource = aws_kms_key.files[0].arn, Condition = { StringLike = { "kms:ViaService" = "s3.${data.aws_region.current.name}.amazonaws.com" } } }
+  ] })
+}
+
+resource "aws_guardduty_malware_protection_plan" "files" {
+  count = var.aws_endpoint_url == null ? 1 : 0
+  role  = aws_iam_role.guardduty[0].arn
+  protected_resource {
+    s3_bucket {
+      bucket_name     = aws_s3_bucket.files.id
+      object_prefixes = ["uploads/"]
+    }
+  }
+}
+
+resource "aws_cloudwatch_event_rule" "scan_result" {
+  count         = var.aws_endpoint_url == null ? 1 : 0
+  name          = "${local.prefix}-scan-result"
+  event_pattern = jsonencode({ source = ["aws.guardduty"], "detail-type" = ["GuardDuty Malware Protection Object Scan Result"] })
+}
+
+resource "aws_cloudwatch_event_target" "scan_result" {
+  count = var.aws_endpoint_url == null ? 1 : 0
+  rule  = aws_cloudwatch_event_rule.scan_result[0].name
+  arn   = aws_lambda_function.handlers["scan"].arn
+}
+
+resource "aws_lambda_permission" "scan_result" {
+  count         = var.aws_endpoint_url == null ? 1 : 0
+  statement_id  = "AllowEventBridgeScanResult"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.handlers["scan"].function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.scan_result[0].arn
+}
+
+resource "aws_cloudwatch_log_metric_filter" "scan_infected" {
+  count          = var.aws_endpoint_url == null ? 1 : 0
+  name           = "${local.prefix}-scan-infected"
+  log_group_name = "/aws/lambda/${aws_lambda_function.handlers["scan"].function_name}"
+  pattern        = "\"scan infected\""
+  metric_transformation {
+    name      = "ScanInfected"
+    namespace = "GhostDrop"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "scan_infected" {
+  count               = var.aws_endpoint_url == null ? 1 : 0
+  alarm_name          = "${local.prefix}-scan-infected"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = "1"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "1"
+  namespace           = "GhostDrop"
+  metric_name         = "ScanInfected"
+  alarm_description   = "Malware was detected in an uploaded object"
+}
+
+resource "aws_cloudwatch_log_metric_filter" "scan_failed" {
+  count          = var.aws_endpoint_url == null ? 1 : 0
+  name           = "${local.prefix}-scan-failed"
+  log_group_name = "/aws/lambda/${aws_lambda_function.handlers["scan"].function_name}"
+  pattern        = "\"scan scan_failed\""
+  metric_transformation {
+    name      = "ScanFailures"
+    namespace = "GhostDrop"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "scan_failed" {
+  count               = var.aws_endpoint_url == null ? 1 : 0
+  alarm_name          = "${local.prefix}-scan-failed"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = "1"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "1"
+  namespace           = "GhostDrop"
+  metric_name         = "ScanFailures"
+  alarm_description   = "An uploaded object could not be scanned (failed, unsupported, or skipped)"
+}

@@ -13,7 +13,6 @@ die() { printf '\033[1;31me2e\033[0m %s\n' "$*" >&2; exit 1; }
 command -v docker >/dev/null || die "docker is required"
 command -v node >/dev/null || die "node is required"
 
-# 1. Floci must be up and healthy.
 if ! curl -fsS "http://localhost.floci.io:4566/_localstack/health" >/dev/null 2>&1; then
   if command -v floci >/dev/null 2>&1; then
     say "starting floci…"
@@ -31,7 +30,6 @@ if ! curl -fsS "http://localhost.floci.io:4566/_localstack/health" >/dev/null 2>
 fi
 say "floci healthy"
 
-# 2. Provision when forced or when the API gateway is unreachable.
 gateway_host=$(node -e "const fs=require('fs');try{const s=JSON.parse(fs.readFileSync('$ROOT/infrastructure/terraform.tfstate','utf8'));process.stdout.write(new URL(s.outputs.api_url.value).hostname)}catch(e){}")
 provisioned=false
 if [ -n "$gateway_host" ]; then
@@ -46,8 +44,10 @@ fi
 [ -n "$gateway_host" ] || die "gateway host not found in terraform.tfstate"
 say "gateway $gateway_host"
 
-# 3. API round trip.
-api() { # method path [body] -> status + body via stdout
+bucket=$(node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('$ROOT/infrastructure/terraform.tfstate','utf8'));process.stdout.write(s.outputs.files_bucket.value)")
+scan_fn=$(node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('$ROOT/infrastructure/terraform.tfstate','utf8'));const b=s.outputs.files_bucket.value;process.stdout.write(b.replace(/-files$/,'-scan-result'))")
+
+api() { # method path [body] -> status, body left in /tmp/e2e-body
   method=$1 path=$2 body=${3-}
   if [ -n "$body" ]; then
     curl -s -o /tmp/e2e-body -w '%{http_code}' -H "Host: $gateway_host" -X "$method" "http://127.0.0.1:4566$path" -H 'content-type: application/json' -d "$body"
@@ -57,27 +57,43 @@ api() { # method path [body] -> status + body via stdout
 }
 
 json_field() { # field -> value from /tmp/e2e-body
-  node -e "const s=JSON.parse(require('fs').readFileSync('/tmp/e2e-body','utf8'));process.stdout.write(s.$1)"
+  node -e "const s=JSON.parse(require('fs').readFileSync('/tmp/e2e-body','utf8'));process.stdout.write(String(s.$1))"
+}
+
+simulate_scan() { # scan_status result_status -> fires the scan handler
+  scan_status=$1 result_status=$2
+  curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost.floci.io:4566/2015-03-31/functions/$scan_fn/invocations" \
+    -H 'content-type: application/json' \
+    -d "{\"detail\":{\"scanStatus\":\"$scan_status\",\"s3ObjectDetails\":{\"bucketName\":\"$bucket\",\"objectKey\":\"$storage_key\"},\"scanResultDetails\":{\"scanResultStatus\":\"$result_status\"}}}"
+}
+
+upload_and_put() { # name -> sets id, token, storage_key
+  name=$1
+  json=$(node -e "console.log(JSON.stringify({fileName:'$name',contentType:'text/plain',fileSize:11,expiresInSeconds:300,maxDownloads:1}))")
+  code=$(api POST /api/v1/uploads "$json"); [ "$code" = 201 ] || die "create upload: got $code"
+  id=$(json_field id)
+  token=$(json_field deletionToken)
+  upload_url=$(json_field uploadUrl)
+  storage_key=$(node -e "const u=new URL(process.argv[1]);process.stdout.write(decodeURIComponent(u.pathname).split('/').slice(2).join('/'))" "$upload_url")
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$upload_url" -H 'content-type: text/plain' --data-binary 'hello world')
+  [ "$code" = 200 ] || die "presigned PUT: got $code"
+  say "uploaded $id ($storage_key)"
 }
 
 NAME="ghostdrop-e2e.txt"
-json=$(node -e "console.log(JSON.stringify({fileName:'$NAME',contentType:'text/plain',fileSize:11,expiresInSeconds:300,maxDownloads:1}))")
-code=$(api POST /api/v1/uploads "$json"); [ "$code" = 201 ] || die "create upload: got $code"
-id=$(json_field id)
-token=$(json_field deletionToken)
-upload_url=$(json_field uploadUrl)
+upload_and_put "$NAME"
 
-code=$(curl -s -o /dev/null -w '%{http_code}' -X PUT "$upload_url" -H 'content-type: text/plain' --data-binary 'hello world')
-[ "$code" = 200 ] || die "presigned PUT: got $code"
-say "uploaded $id"
+sleep 2
+code=$(api GET "/api/v1/files/$id"); [ "$code" = 404 ] || die "file available before scan: got $code"
+say "not available before scan"
 
-# The S3 event flips PENDING_UPLOAD -> AVAILABLE asynchronously; poll for it.
+code=$(simulate_scan COMPLETED NO_THREATS_FOUND); [ "$code" = 200 ] || die "scan simulate call: got $code"
 i=0
 until [ "$(api GET "/api/v1/files/$id")" = 200 ]; do
-  i=$((i + 1)); [ "$i" -gt 15 ] && die "file never became available after S3 event"
+  i=$((i + 1)); [ "$i" -gt 15 ] && die "file never became available after clean scan"
   sleep 1
 done
-say "confirmed available"
+say "confirmed available after clean scan"
 
 code=$(api POST "/api/v1/files/$id/downloads" '{}'); [ "$code" = 200 ] || die "create download: got $code"
 download_url=$(json_field downloadUrl)
@@ -87,12 +103,30 @@ printf '%s' "$headers" | grep -qi "content-disposition: attachment; filename=\"$
 [ "$(cat /tmp/e2e-download)" = "hello world" ] || die "downloaded bytes mismatch"
 say "download preserved name and bytes"
 
-# maxDownloads=1: a second reservation must be refused.
 code=$(api POST "/api/v1/files/$id/downloads" '{}'); [ "$code" = 404 ] || die "second download: got $code, want 404"
 
+delete_with_token() {
+  code=$(curl -s -o /tmp/e2e-body -w '%{http_code}' -H "Host: $gateway_host" -X DELETE "http://127.0.0.1:4566/api/v1/files/$id" -H "authorization: Bearer $token")
+  [ "$code" = 204 ] || die "delete with token: got $code"
+}
 code=$(api DELETE "/api/v1/files/$id"); [ "$code" = 401 ] || die "delete without token: got $code"
-code=$(curl -s -o /tmp/e2e-body -w '%{http_code}' -H "Host: $gateway_host" -X DELETE "http://127.0.0.1:4566/api/v1/files/$id" -H "authorization: Bearer $token")
-[ "$code" = 204 ] || die "delete with token: got $code"
+delete_with_token
 code=$(api GET "/api/v1/files/$id"); [ "$code" = 404 ] || die "file still visible after delete: got $code"
+say "authorized delete ok"
 
-say "PASS: upload -> S3 confirm -> download (name+bytes) -> limit -> authorized delete"
+upload_and_put "infected-e2e.txt"
+code=$(simulate_scan COMPLETED THREATS_FOUND); [ "$code" = 200 ] || die "infected scan simulate: got $code"
+sleep 1
+code=$(api GET "/api/v1/files/$id"); [ "$code" = 404 ] || die "infected file downloadable: got $code"
+code=$(api POST "/api/v1/files/$id/downloads" '{}'); [ "$code" = 404 ] || die "infected file got download URL: got $code"
+say "infected file never available"
+delete_with_token
+
+upload_and_put "failed-e2e.txt"
+code=$(simulate_scan FAILED FAILED); [ "$code" = 200 ] || die "failed scan simulate: got $code"
+sleep 1
+code=$(api GET "/api/v1/files/$id"); [ "$code" = 404 ] || die "unscannable file downloadable: got $code"
+say "unscannable file fail-closed"
+delete_with_token
+
+say "PASS: clean path, infected quarantine, fail-closed scan, limits and deletion"

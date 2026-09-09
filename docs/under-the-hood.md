@@ -36,6 +36,27 @@ The presigned GET is signed with a `response-content-disposition` that carries
 the original file name (sanitized of header-breaking bytes), so the browser
 saves `report.pdf`, not the random `uploads/<key>`.
 
+## Encryption at rest with a dedicated KMS key
+
+Production objects use **SSE-KMS** with a dedicated customer-managed key
+(`alias/ghostdrop-files`, created and rotated by Terraform with a 7-day
+deletion window). The bucket sets it as the **default encryption** with S3
+**Bucket Keys** enabled, which makes S3 use a short-lived bucket key for each
+object and cuts KMS `GenerateDataKey` traffic — same crypto boundary, lower
+cost.
+
+The presigned PUT sends **no encryption headers on purpose**. With bucket
+default encryption in place, a header-less PUT is encrypted by S3 with the
+bucket key; requiring signed headers would add client complexity for no gain.
+A bucket policy closes the downgrade paths: it denies any `uploads/*` PUT that
+declares a non-KMS algorithm or any SSE-C header. Downloads decrypt through the
+same default path — browsers never touch KMS.
+
+The KMS key policy is least-privilege: account-root administration plus a
+`ViaService = s3` statement so S3 (and GuardDuty, which reads objects to scan
+them) may use the key, restricted to this account. Only production uses it;
+the local emulator keeps AES256 because it does not emulate KMS.
+
 ## Expiry and limits enforced in one atomic write
 
 `DynamoDbFileRepository.reserveDownload` runs a **single conditional
@@ -44,21 +65,33 @@ saves `report.pdf`, not the random `uploads/<key>`.
 ```text
 SET downloadCount = downloadCount + 1
 WHERE status = 'AVAILABLE'
+  AND attribute_exists(scannedAt)
   AND expiresAt > :now
   AND (attribute_not_exists(maxDownloads) OR downloadCount < maxDownloads)
 ```
 
 There is no read-then-write counter, so two concurrent downloads cannot overspend
-the remaining budget. This one write enforces *both* the expiry and the limit.
+the remaining budget. This one write enforces *all three* gates: the clean-scan
+requirement (`AVAILABLE` plus `scannedAt`), the expiry, and the limit.
 DynamoDB TTL on `expiresAt` is only the physical cleanup net; it is never the
 access-control mechanism — a download is refused here, at reservation time.
 
-## A file is not downloadable until its bytes exist
+## A file is not downloadable until a malware scan says so
 
-Files are created `PENDING_UPLOAD`. Only an S3 `ObjectCreated` event turns them
-`AVAILABLE` (`UploadConfirmationHandler.markAvailable`). Because upload keys are
-random (`uploads/<24 random bytes>`), a spurious event cannot confirm someone
-else's upload. The share link returns "unavailable" until the bytes are real.
+Files are created `PENDING_UPLOAD`. An S3 `ObjectCreated` event moves them to
+`PENDING_SCAN` (`UploadConfirmationHandler.beginScan`) — **not** to
+`AVAILABLE`. Because upload keys are random (`uploads/<24 random bytes>`), a
+spurious event cannot confirm someone else's upload.
+
+From `PENDING_SCAN`, only a trusted verdict from GuardDuty Malware Protection
+for S3 moves the file: a clean result (`COMPLETED` + `NO_THREATS_FOUND`) makes
+it `AVAILABLE` and records `scannedAt`; `THREATS_FOUND` makes it `INFECTED`
+and deletes the object; anything else (`FAILED`, `SKIPPED`, `UNSUPPORTED`,
+`ACCESS_DENIED`, or an unknown shape) makes it `SCAN_FAILED` — fail closed,
+never downloadable. `ScanResultService` decides the outcome; each transition
+is a conditional DynamoDB write, so duplicate or out-of-order events are
+no-ops and an old `INFECTED` cannot be resurrected into `AVAILABLE` by a
+delayed clean event.
 
 The S3 event is an async invocation, so repeated handler failures end up on an
 SQS DLQ instead of vanishing after Lambda's retries; an alarm fires when the

@@ -19,12 +19,16 @@ https://github.com/user-attachments/assets/34e4a2c8-4515-4914-bed6-161e285699a7
 2. `POST /api/v1/uploads` returns a short-lived **presigned upload URL** and a
    random id. The browser streams the file straight to S3 — bytes never pass
    through GhostDrop.
-3. An S3 object-created event moves the record from `PENDING_UPLOAD` to
-   `AVAILABLE`. Until then the share link reports the file as unavailable.
-4. The recipient opens `/d/{id}`. If password-protected, the correct password
+3. An S3 object-created event moves the record to `PENDING_SCAN`: a malware
+   scan must pass before the file can ever be shared.
+4. GuardDuty Malware Protection for S3 scans the object; only an explicitly
+   clean result makes the file `AVAILABLE`. Anything infected is deleted;
+   anything inconclusive fails closed and stays unavailable.
+5. The recipient opens `/d/{id}`. If password-protected, the correct password
    produces a short-lived **presigned download URL**; the browser downloads the
-   bytes directly from S3.
-5. Every download is a single atomic DynamoDB reservation that enforces the
+   bytes directly from S3. Files are encrypted at rest with a dedicated
+   customer-managed KMS key.
+6. Every download is a single atomic DynamoDB reservation that enforces the
    expiry and remaining-download budget. A scheduled cleanup deletes the object
    and the metadata; DynamoDB TTL and an S3 lifecycle rule are the physical
    safety net, and cleanup failures page through CloudWatch alarms.
@@ -35,8 +39,10 @@ flowchart LR
     Gateway["API Gateway · /api/v1/*"]
     Handlers["Java Lambda handlers"]
     Dynamo[("DynamoDB · metadata + atomic reservations")]
-    Bucket[("S3 · private bucket")]
+    Bucket[("S3 · private bucket, SSE-KMS")]
+    Scan["GuardDuty Malware Protection"]
     Confirm["confirm handler"]
+    ScanResult["scan-result handler"]
     Cleanup["cleanup handler"]
     Clock["EventBridge · every 5 min"]
 
@@ -45,7 +51,11 @@ flowchart LR
     Gateway --> Handlers
     Handlers -- "create · reserve · delete" --> Dynamo
     Bucket -- "ObjectCreated event" --> Confirm
-    Confirm -- "mark AVAILABLE" --> Dynamo
+    Confirm -- "PENDING_SCAN" --> Dynamo
+    Bucket --> Scan
+    Scan -- "scan result event" --> ScanResult
+    ScanResult -- "CLEAN → AVAILABLE · INFECTED → delete" --> Dynamo
+    ScanResult -- "delete infected object" --> Bucket
     Clock --> Cleanup
     Cleanup -- "delete expired object + metadata" --> Bucket
     Cleanup --> Dynamo
@@ -166,10 +176,17 @@ The parts most worth reading (full detail in
 - **Bytes never touch the compute** — files move browser → S3 through presigned
   URLs; Lambdas only mint URLs and move metadata. The upload PUT signs the
   declared size, so S3 rejects bodies that exceed it.
+- **Files are shared only after a clean malware scan** — uploads stop at
+  `PENDING_SCAN`; a GuardDuty Malware Protection result decides `AVAILABLE`
+  (clean), deletion (infected), or fail-closed `SCAN_FAILED`.
+- **Encryption at rest with a dedicated KMS key** — bucket default encryption
+  is SSE-KMS with `alias/ghostdrop-files` and S3 Bucket Keys; a bucket policy
+  rejects non-KMS uploads.
 - **One atomic write enforces expiry + download limit** — a single conditional
   DynamoDB `UpdateItem`; no race can overspend the budget.
-- **`PENDING_UPLOAD` → `AVAILABLE`** via an S3 event on a random key, so an
-  un-uploaded (or un-scanned) file is never downloadable.
+- **`PENDING_UPLOAD` → `PENDING_SCAN` → `AVAILABLE`** — an S3 event confirms
+  the random key; only a clean malware-scan result flips the file to
+  `AVAILABLE`. Infected objects are deleted, inconclusive scans fail closed.
 - **Deletion token stored only as a SHA-256 hash.**
 - **Nothing-style UI** — OLED/PAPER themes, Space Grotesk/Mono, and a `motion`
   folder dropzone.

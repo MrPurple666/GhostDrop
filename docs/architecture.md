@@ -12,11 +12,13 @@ flowchart LR
         Upload["upload view"]
         Share["share / download view (/d/:id)"]
     end
-    S3[("S3 · ghostdrop-*-files<br/>uploads/&lt;random key&gt;")]
+    S3[("S3 · ghostdrop-*-files<br/>uploads/&lt;random key&gt;<br/>SSE-KMS")]
     Api["API Gateway · HTTP API v2<br/>/api/v1/*"]
     Handlers["Java 26 Lambda handlers"]
     Dynamo[("DynamoDB · ghostdrop-*-files<br/>id (PK) · storageKey (GSI) · status<br/>expiresAt (TTL) + hour-bucket GSI · counts")]
-    Confirm["confirm handler<br/>PENDING → AVAILABLE"]
+    Confirm["confirm handler<br/>PENDING_UPLOAD → PENDING_SCAN"]
+    Scan["GuardDuty Malware Protection<br/>for S3"]
+    ScanResult["scan-result handler<br/>PENDING_SCAN → verdict"]
     Cleanup["cleanup handler<br/>delete expired S3 object + metadata"]
     Clock["EventBridge · every 5 min"]
 
@@ -26,7 +28,11 @@ flowchart LR
     Handlers -- "create · reserve · delete" --> Dynamo
     Share -- "presigned GET (bytes)" --> S3
     S3 -- "ObjectCreated event" --> Confirm
-    Confirm -- "flip status" --> Dynamo
+    Confirm -- "PENDING_SCAN" --> Dynamo
+    S3 -- "object to scan" --> Scan
+    Scan -- "scan result event" --> ScanResult
+    ScanResult -- "CLEAN → AVAILABLE<br/>INFECTED/FAILED → terminal" --> Dynamo
+    ScanResult -- "delete infected object" --> S3
     Clock --> Cleanup
     Cleanup --> S3
     Cleanup --> Dynamo
@@ -53,12 +59,37 @@ flowchart LR
 | ----- | ----- |
 | `id` | random key; public share id |
 | `storageKey` | `uploads/<random>`; GSI for event confirmation |
-| `status` | `PENDING_UPLOAD` → `AVAILABLE` |
+| `status` | lifecycle state machine, below |
+| `scannedAt` | when the scan verdict was applied; absent = never scanned |
 | `expiresAt` | epoch seconds; TTL + numeric range on hour GSI |
 | `expirationBucket` | `yyyy-MM-dd'T'HH` UTC; cleanup scans current + prior hour |
 | `downloadCount`, `maxDownloads` | atomic reservation budget |
 | `passwordHash` | Argon2id, present only when protected |
 | `deletionTokenHash` | SHA-256 of the owner token |
+
+### State machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING_UPLOAD : upload created
+    PENDING_UPLOAD --> PENDING_SCAN : S3 ObjectCreated (confirm handler)
+    PENDING_UPLOAD --> AVAILABLE : clean scan (event raced the confirm)
+    PENDING_UPLOAD --> INFECTED : scan verdict (event raced the confirm)
+    PENDING_UPLOAD --> SCAN_FAILED : inconclusive verdict
+    PENDING_SCAN --> AVAILABLE : clean scan
+    PENDING_SCAN --> INFECTED : malware found → object deleted
+    PENDING_SCAN --> SCAN_FAILED : failed/unsupported/skipped
+    AVAILABLE --> [*] : download budget, delete, expiry
+    INFECTED --> [*] : cleanup, delete, expiry
+    SCAN_FAILED --> [*] : cleanup, delete, expiry
+    PENDING_UPLOAD --> [*] : cleanup, delete, expiry
+    PENDING_SCAN --> [*] : cleanup, delete, expiry
+```
+
+Every transition is a conditional DynamoDB `UpdateItem` guarded on the current
+`status`, so duplicate events and out-of-order delivery are no-ops: an old
+`INFECTED` verdict can never be followed into `AVAILABLE`, and an expired or
+deleted row never resurrects. Terminal states are final.
 
 ### Atomic download reservation
 
@@ -67,25 +98,61 @@ flowchart LR
 ```
 SET downloadCount = downloadCount + 1
 WHERE status = 'AVAILABLE'
+  AND attribute_exists(scannedAt)
   AND expiresAt > :now
   AND (attribute_not_exists(maxDownloads) OR downloadCount < maxDownloads)
 ```
 
-This is the single point that enforces expiry and the download budget. A
-concurrent attacker cannot overspend because DynamoDB serializes the condition.
+This is the single point that enforces the scan gate, expiry, and the download
+budget. A concurrent attacker cannot overspend because DynamoDB serializes the
+condition. Any non-`AVAILABLE` state — or an `AVAILABLE` row that never went
+through a scan — is refused here and by `canCreateDownload` before it.
 
 ## S3 event confirmation
 
 Files are created `PENDING_UPLOAD` so a share link never resolves before the
-bytes exist. S3 emits `ObjectCreated` for `uploads/*`, the confirm handler
-finds the row by `storageKey` and flips it `AVAILABLE`. The key is random, so a
-spurious event cannot confirm another upload.
+bytes exist. S3 emits `ObjectCreated` for `uploads/*`; the confirm handler
+finds the row by `storageKey` and moves it to `PENDING_SCAN`. The key is
+random, so a spurious event cannot confirm another upload. The object is not
+downloadable from this point until a scan verdict arrives.
 
 Confirmation is an async invocation; if the handler keeps failing, Lambda's
 retries eventually land the event on an SQS DLQ (`confirm_dlq`) instead of
 dropping it silently. An alarm fires when the queue is non-empty; recovery is
 operator-driven (fix the cause and re-drive), while the S3 lifecycle rule and
-DynamoDB TTL expire any upload that stays `PENDING_UPLOAD` regardless.
+DynamoDB TTL expire any upload that stays in a pre-`AVAILABLE` state
+regardless.
+
+## Malware scanning (fail closed)
+
+GuardDuty Malware Protection for S3 is enabled on `uploads/*` in production
+(`aws_guardduty_malware_protection_plan` with a dedicated service role). It
+scans each new object and publishes exactly one result per object to
+EventBridge (`GuardDuty Malware Protection Object Scan Result`); delivery is
+at-least-once.
+
+The `ScanResultHandler` Lambda interprets the verdict:
+
+- `scanStatus = COMPLETED` + `NO_THREATS_FOUND` → `PENDING_SCAN → AVAILABLE`
+  (and sets `scannedAt`),
+- `scanStatus = COMPLETED` + `THREATS_FOUND` → `PENDING_SCAN → INFECTED`, then
+  the S3 object is deleted,
+- anything else (`FAILED`, `SKIPPED`, `UNSUPPORTED`, `ACCESS_DENIED`, unknown)
+  → `PENDING_SCAN → SCAN_FAILED` and stays unavailable.
+
+The system fails closed: **only** an explicitly clean verdict can produce
+`AVAILABLE`. Verdicts are never client-supplied; they come from the GuardDuty
+service role through EventBridge. Transitions are conditional DynamoDB writes
+guarded on `status`, so replayed or out-of-order events are no-ops — an old
+`INFECTED` can never be followed by a delayed `CLEAN` into `AVAILABLE`.
+
+Because rows are schemaless, a legacy `AVAILABLE` row created before this
+gate existed has no `scannedAt`; `canCreateDownload` and `reserveDownload`
+both require `scannedAt`, so legacy rows are treated as not scanned and never
+become downloadable. Security takes precedence over compatibility.
+
+Observability: every verdict logs a structured line; metric filters feed
+`GhostDrop/ScanInfected` and `GhostDrop/ScanFailures` alarms (production only).
 
 ## Cleanup
 
@@ -109,17 +176,6 @@ production, a WAF rate rule caps each client IP at 500 requests per 5 minutes
 (JSON: request id, route, status, latency, source IP) stream to CloudWatch
 with 7-day retention, and an alarm fires on any 5xx. All four are
 production-only resources; the local emulator does not model them.
-
-## Extension point: malware scanning
-
-To add content inspection without proxying bytes:
-
-1. Confirm-handler event (or a new scanning handler) pulls the object, inspects
-   it, and only then flips `PENDING_UPLOAD → AVAILABLE`; or
-2. delete/reject on a scan verdict.
-
-The `PENDING_UPLOAD` state exists precisely so an un-scanned object is never
-downloadable. Do not skip confirmation.
 
 ## Frontend
 

@@ -1,8 +1,9 @@
 # Local development
 
 GhostDrop runs against **Floci**, an AWS emulator, so the whole serverless path
-(upload → confirm → download → delete → cleanup) is exercised locally before
-deployment.
+(upload → confirm → malware scan → download → delete → cleanup) is exercised
+locally before deployment. GuardDuty Malware Protection for S3 and KMS are not
+emulated; see below for how the scan gate is simulated.
 
 ## Requirements
 
@@ -86,6 +87,29 @@ behavior and verified there:
    endpoint (`count = aws_endpoint_url == null ? 1 : 0`), and the emulator does
    not implement metric filters. E2E still exercises the full data path
    (upload → S3 confirm → download → limit → delete) over real HTTP.
+5. **No GuardDuty, no KMS.** The malware-protection plan, its service role,
+   the EventBridge scan-result rule, the scan-result alarms, and the KMS key
+   are production-only. The emulator bucket stays on AES256.
+
+## Malware-scan simulation
+
+Without GuardDuty, nothing would ever move a file out of `PENDING_SCAN`.
+Floci does emulate Lambda invocation, so `scripts/e2e.sh` and ad-hoc testing
+fire the **real scan-result handler** with the same EventBridge event shape
+production receives:
+
+```sh
+curl -X POST "http://localhost.floci.io:4566/2015-03-31/functions/ghostdrop-dev-scan-result/invocations" \
+  -H 'content-type: application/json' \
+  -d '{"detail":{"scanStatus":"COMPLETED","s3ObjectDetails":{"bucketName":"ghostdrop-dev-files","objectKey":"uploads/<KEY>"},"scanResultDetails":{"scanResultStatus":"NO_THREATS_FOUND"}}}'
+```
+
+`NO_THREATS_FOUND` → `AVAILABLE`; `THREATS_FOUND` → `INFECTED` + object
+deleted; `scanStatus: "FAILED"` (or `SKIPPED`/`UNSUPPORTED`) → fail-closed
+`SCAN_FAILED`. The object key is `uploads/<token>`; the e2e script derives it
+from the presigned upload URL. The handler parses the same fields in both
+environments, so local simulation exercises the production code path — it does
+not fake antivirus logic, only the result event.
 
 ## Notes
 

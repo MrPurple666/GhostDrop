@@ -21,10 +21,18 @@ controls, the design intent, and the boundaries that must not be weakened.
 
 - `block_public_acls`, `block_public_policy`, `ignore_public_acls`,
   `restrict_public_buckets` are all `true`.
-- Server-side encryption at rest (`AES256`).
+- Encryption at rest is **SSE-KMS** with a dedicated customer-managed key
+  (`alias/ghostdrop-files`; Terraform-managed, auto-rotated yearly, 7-day
+  deletion window) and S3 Bucket Keys. No generic AWS-managed key, and no
+  client-side encryption keys stored by GhostDrop.
+- The bucket default encryption is that KMS key; a bucket policy **denies**
+  uploads that declare non-KMS encryption or SSE-C, so the encryption cannot be
+  downgraded even by an explicit header.
 - CORS is locked to a single `allowed_origin` and methods `PUT`/`GET` only.
 - IAM is least-privilege: the Lambda role can touch only
-  `arn:…:ghostdrop-{env}-files/uploads/*` and the file table/indexes.
+  `arn:…:ghostdrop-{env}-files/uploads/*` and the file table/indexes. KMS key
+  policy grants account-root administration plus a `ViaService = s3`
+  statement restricted to this account (S3 and GuardDuty decrypt through it).
 
 ### Upload and download
 
@@ -60,30 +68,57 @@ controls, the design intent, and the boundaries that must not be weakened.
 - `DELETE` requires `Authorization: Bearer <deletionToken>` and verifies the
   hash before removing the S3 object and the metadata row.
 
-### Confirmation and cleanup
+### Confirmation, scanning and cleanup
 
-- A file becomes available only through an S3 `ObjectCreated` event whose key
-  matches the pending record's storage key (`markAvailable` flips
-  `PENDING_UPLOAD → AVAILABLE` atomically).
+- A file becomes `AVAILABLE` only through an S3 `ObjectCreated` event (which
+  moves it to `PENDING_SCAN`) followed by an explicitly clean **GuardDuty
+  Malware Protection** verdict (`COMPLETED` + `NO_THREATS_FOUND`) processed by
+  the scan-result handler. Every other verdict — infected, failed, skipped,
+  unsupported, access denied, malformed, unknown — keeps the file unavailable
+  (fail closed). Scan verdicts are never client-supplied; they arrive via
+  EventBridge from the GuardDuty service role.
+- `INFECTED` objects are deleted; metadata is marked `INFECTED` so no download
+  URL can ever be minted. Rows that never reach `AVAILABLE` are removed by the
+  scheduled cleanup at expiry, and pre-change `AVAILABLE` rows without
+  `scannedAt` are treated as unscanned and non-downloadable.
 - Confirmation is an async invocation, so repeated failures land on an SQS DLQ
   with an alarm, rather than disappearing after Lambda's retries.
 - Cleanup runs on a schedule, deleting expired objects and rows. It is
   idempotent: failures are retried on the next pass, never double-deleted.
 - Cleanup failures are visible: each run logs a structured summary and one
   line per failed object, and a metric-filter alarm fires on any failure.
+  Malware verdicts and scan failures log structured lines feeding the
+  `ScanInfected` and `ScanFailures` alarms.
 - Physical backstops for deletion: DynamoDB TTL on `expiresAt` and an S3
   lifecycle rule that expires `uploads/*` after 31 days.
 
 ## Boundaries and accepted risks
 
-- Content scanning is out of scope for this project. If malware scanning is
-  required, add an inspect step on the `ObjectCreated` event before
-  `markAvailable`; see [docs/architecture.md](docs/architecture.md).
+- Content scanning runs only in production (GuardDuty Malware Protection for
+  S3, priced per GB scanned) and only for new objects under `uploads/`. The
+  local emulator simulates scan-result events; it does not detect malware.
+- Malware scanning is a best-effort AV gate, not a guarantee: keep the
+  `PENDING_SCAN` → clean-verdict-only invariant intact, but do not treat a
+  clean scan as proof the file is harmless forever.
 - The presigned download URL is shareable within its lifetime; treat download
   URLs like bearer tokens.
 - An available-but-unclaimed password gate is deliberately indistinguishable
   from a consumed or expired file (both surface as `404`) so that a lockout
-  does not reveal the file's existence to an unauthorized caller.
+  does not reveal the file's existence to an unauthorized caller. Files still
+  being scanned or quarantined also surface as `404`, revealing nothing about
+  the scan state.
+
+## Cost notes
+
+- **GuardDuty Malware Protection for S3**: billed per GB of scanned objects
+  plus per-object costs; only objects under `uploads/` are scanned, once each.
+- **KMS**: S3 Bucket Keys reduce per-object `GenerateDataKey` calls to one per
+  bucket key; key rotation is free. KMS costs are negligible at GhostDrop
+  scale.
+- **Lambda/EventBridge**: the scan-result handler runs once per uploaded
+  object; cleanup stays on its 5-minute schedule.
+- Nothing introduced here runs continuously; all components are event-driven
+  or scheduled.
 
 ## Reporting
 

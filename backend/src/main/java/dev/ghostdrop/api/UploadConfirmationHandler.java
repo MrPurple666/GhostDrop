@@ -19,7 +19,7 @@ public final class UploadConfirmationHandler implements RequestHandler<S3Event, 
     @Override
     public Void handleRequest(S3Event event, Context context) {
         for (var record : event.getRecords())
-            files.markAvailable(
+            files.beginScan(
                     URLDecoder.decode(record.getS3().getObject().getKey(), StandardCharsets.UTF_8));
         return null;
     }

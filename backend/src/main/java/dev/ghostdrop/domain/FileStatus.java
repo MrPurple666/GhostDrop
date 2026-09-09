@@ -2,7 +2,8 @@ package dev.ghostdrop.domain;
 
 public enum FileStatus {
     PENDING_UPLOAD,
+    PENDING_SCAN,
     AVAILABLE,
-    EXPIRED,
-    DELETED
+    INFECTED,
+    SCAN_FAILED
 }

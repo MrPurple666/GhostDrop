@@ -15,6 +15,7 @@ public record TemporaryFile(
         Integer maxDownloads,
         String passwordHash,
         String deletionTokenHash,
+        Instant scannedAt,
         FileStatus status) {
 
     public TemporaryFile {
@@ -44,6 +45,9 @@ public record TemporaryFile(
     }
 
     public boolean canCreateDownload(Instant now) {
-        return status == FileStatus.AVAILABLE && !isExpired(now) && !hasReachedDownloadLimit();
+        return status == FileStatus.AVAILABLE
+                && scannedAt != null
+                && !isExpired(now)
+                && !hasReachedDownloadLimit();
     }
 }
